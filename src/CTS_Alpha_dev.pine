@@ -1,0 +1,182 @@
+//@version=6
+//=============================================================================
+// CTS Alpha
+//-----------------------------------------------------------------------------
+// Version : v0.2.0
+// Commit  : 0001
+// Stage   : Sprint 001
+//
+// Description:
+// CTS Alpha Trading Framework
+//
+// Repository:
+// https://github.com/yueyh-123/CTS-Alpha
+//=============================================================================
+
+indicator(
+    title = "CTS Alpha",
+    shorttitle = "CTS",
+    overlay = true,
+    max_labels_count = 500,
+    max_lines_count = 500,
+    max_boxes_count = 200)
+
+//=============================================================================
+// INPUT GROUP
+//=============================================================================
+
+groupGeneral = "General"
+groupEMA = "EMA"
+groupDebug = "Debug"
+
+//=============================================================================
+// GENERAL
+//=============================================================================
+
+showEMA = input.bool(true, "Show EMA", group = groupGeneral)
+showBackground = input.bool(true, "Background", group = groupGeneral)
+
+debugMode = input.bool(false, "Debug Mode", group = groupDebug)
+
+//=============================================================================
+// EMA SETTINGS
+//=============================================================================
+
+emaFastLength = input.int(20, "EMA Fast", minval = 1, step = 1, group = groupEMA)
+emaMidLength = input.int(60, "EMA Middle", minval = 1, step = 1, group = groupEMA)
+emaSlowLength = input.int(120, "EMA Slow", minval = 1, step = 1, group = groupEMA)
+
+atrLength = input.int(14, "ATR Length", minval = 1, step = 1, group = groupGeneral)
+
+//=============================================================================
+// CONSTANTS
+//=============================================================================
+
+TREND_STRONG = 90.0
+TREND_HEALTHY = 75.0
+TREND_WEAK = 60.0
+TREND_NEUTRAL = 40.0
+
+//=============================================================================
+// THEME
+//=============================================================================
+
+clrBull = color.rgb(34,197,94)
+clrBear = color.rgb(239,68,68)
+clrNeutral = color.rgb(156,163,175)
+
+clrBullBG = color.new(clrBull,90)
+clrBearBG = color.new(clrBear,90)
+
+//=============================================================================
+// HELPER
+//=============================================================================
+
+clamp(value,minValue,maxValue)=>
+    math.max(minValue,math.min(value,maxValue))
+
+safeDivide(a,b)=>
+    b==0.0?0.0:a/b
+
+normalize(value,minValue,maxValue)=>
+    maxValue==minValue?0.0:
+     clamp(
+        (value-minValue)/(maxValue-minValue)*100.0,
+        0.0,
+        100.0)
+
+normalizeSymmetric(value,maxAbs)=>
+    clamp(
+        ((value+maxAbs)/(2.0*maxAbs))*100.0,
+        0.0,
+        100.0)
+
+percentChange(current,previous)=>
+    previous==0.0?0.0:
+        (current-previous)/previous*100.0
+
+roundScore(score)=>
+    math.round(score*10.0)/10.0
+
+scoreColor(score)=>
+    score>=TREND_HEALTHY?clrBull:
+    score<=TREND_NEUTRAL?clrBear:
+    clrNeutral
+
+scoreState(score)=>
+     score>=90?"Bull Strong":
+     score>=75?"Bull Healthy":
+     score>=60?"Bull Weak":
+     score>=40?"Neutral":
+     score>=25?"Bear Weak":
+     score>=10?"Bear Healthy":
+     "Bear Strong"
+
+//=============================================================================
+// CORE CONTEXT
+//=============================================================================
+
+ctxOpen = open
+ctxHigh = high
+ctxLow = low
+ctxClose = close
+ctxVolume = volume
+
+ctxEMAFast = ta.ema(close,emaFastLength)
+ctxEMAMid = ta.ema(close,emaMidLength)
+ctxEMASlow = ta.ema(close,emaSlowLength)
+
+ctxATR = ta.atr(atrLength)
+
+//=============================================================================
+// RESERVED
+//=============================================================================
+
+// Trend Engine
+
+// Structure Engine
+
+// Momentum Engine
+
+// Risk Engine
+
+// Decision Engine
+
+// Dashboard
+
+// Alert
+
+//=============================================================================
+// PLOT
+//=============================================================================
+
+plot(
+    showEMA?ctxEMAFast:na,
+    title="EMA Fast",
+    color=color.green,
+    linewidth=2)
+
+plot(
+    showEMA?ctxEMAMid:na,
+    title="EMA Middle",
+    color=color.orange,
+    linewidth=2)
+
+plot(
+    showEMA?ctxEMASlow:na,
+    title="EMA Slow",
+    color=color.red,
+    linewidth=2)
+
+//=============================================================================
+// DEBUG
+//=============================================================================
+
+if debugMode
+    label.new(
+        bar_index,
+        high,
+        "CTS Alpha\nCommit0001",
+        style=label.style_label_down,
+        color=color.blue,
+        textcolor=color.white)
