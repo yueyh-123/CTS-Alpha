@@ -2,54 +2,89 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.2.0
-// Commit  : 0001
-// Stage   : Sprint 001
+// Version : v0.5.5
+// Commit  : 0014.0
+// Stage   : Sprint 003
 //
 // Description:
-// CTS Alpha Trading Framework
+// CTS Alpha Trading Framework - Direction Engine
+// Direction = Alignment×40% + Structure×30% + Impulse×20% + EMA Position×10%
 //
 // Repository:
 // https://github.com/yueyh-123/CTS-Alpha
 //=============================================================================
 
-indicator(
-    title = "CTS Alpha",
-    shorttitle = "CTS",
-    overlay = true,
-    max_labels_count = 500,
-    max_lines_count = 500,
-    max_boxes_count = 200)
+indicator(title = "CTS Alpha", shorttitle = "CTS", overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 200)
 
 //=============================================================================
-// INPUT GROUP
+// 1. INPUT
 //=============================================================================
+
+//-----------------------------------------------------------------------------
+// 1.1 General
+//-----------------------------------------------------------------------------
 
 groupGeneral = "General"
 groupEMA = "EMA"
 groupDebug = "Debug"
-
-//=============================================================================
-// GENERAL
-//=============================================================================
+const string GROUP_ENGINE = "Engine"
+const string GROUP_DISPLAY = "Display"
+const string GROUP_DEBUG = "Debug"
+const string GROUP_ADVANCED = "Advanced"
 
 showEMA = input.bool(true, "Show EMA", group = groupGeneral)
 showBackground = input.bool(true, "Background", group = groupGeneral)
-
 debugMode = input.bool(false, "Debug Mode", group = groupDebug)
 
-//=============================================================================
-// EMA SETTINGS
-//=============================================================================
+//-----------------------------------------------------------------------------
+// 1.2 EMA Settings
+//-----------------------------------------------------------------------------
 
 emaFastLength = input.int(20, "EMA Fast", minval = 1, step = 1, group = groupEMA)
 emaMidLength = input.int(60, "EMA Middle", minval = 1, step = 1, group = groupEMA)
 emaSlowLength = input.int(120, "EMA Slow", minval = 1, step = 1, group = groupEMA)
-
 atrLength = input.int(14, "ATR Length", minval = 1, step = 1, group = groupGeneral)
 
+//-----------------------------------------------------------------------------
+// 1.3 Pullback Settings
+//-----------------------------------------------------------------------------
+
+pullbackATR = input.float(1.0, "Pullback ATR", step = 0.1, group = GROUP_ENGINE)
+
+//-----------------------------------------------------------------------------
+// 1.4 Slope Settings
+//-----------------------------------------------------------------------------
+
+slopeLookback = input.int(5, "Slope Lookback", minval = 2, maxval = 50, group = GROUP_ENGINE)
+
+//-----------------------------------------------------------------------------
+// 1.5 Structure Settings
+//-----------------------------------------------------------------------------
+
+groupStructure = "Structure"
+pivotLength = input.int(5, "Pivot Length", minval = 2, maxval = 20, group = groupStructure)
+
+//-----------------------------------------------------------------------------
+// 1.6 Impulse Settings
+//-----------------------------------------------------------------------------
+
+impulseLookback = input.int(5, "Impulse Lookback", minval = 2, maxval = 20, group = GROUP_ENGINE)
+
+//-----------------------------------------------------------------------------
+// 1.7 Compression Settings
+//-----------------------------------------------------------------------------
+
+compressionLookback = input.int(20, "Compression Lookback", minval = 10, maxval = 100, group = GROUP_ENGINE)
+compressionATRThreshold = input.float(0.80, "ATR Compression", minval = 0.20, maxval = 2.00, step = 0.05, group = GROUP_ENGINE)
+
+//-----------------------------------------------------------------------------
+// 1.8 Breakout Settings
+//-----------------------------------------------------------------------------
+
+breakoutThreshold = input.float(60.0, "Breakout Threshold", minval = 30.0, maxval = 80.0, step = 5.0, group = GROUP_ENGINE)
+
 //=============================================================================
-// CONSTANTS
+// 2. CONSTANTS
 //=============================================================================
 
 TREND_STRONG = 90.0
@@ -58,62 +93,43 @@ TREND_WEAK = 60.0
 TREND_NEUTRAL = 40.0
 
 //=============================================================================
-// THEME
+// 3. THEME
 //=============================================================================
 
 clrBull = color.rgb(34,197,94)
 clrBear = color.rgb(239,68,68)
 clrNeutral = color.rgb(156,163,175)
-
 clrBullBG = color.new(clrBull,90)
 clrBearBG = color.new(clrBear,90)
 
 //=============================================================================
-// HELPER
+// 4. HELPER FUNCTIONS
 //=============================================================================
 
-clamp(value,minValue,maxValue)=>
-    math.max(minValue,math.min(value,maxValue))
+clamp(value,minValue,maxValue)=> math.max(minValue,math.min(value,maxValue))
+safeDivide(a,b)=> b==0.0?0.0:a/b
+normalize(value,minValue,maxValue)=> maxValue==minValue?0.0: clamp((value-minValue)/(maxValue-minValue)*100.0,0.0,100.0)
+normalizeSymmetric(value,maxAbs)=> clamp(((value+maxAbs)/(2.0*maxAbs))*100.0,0.0,100.0)
+percentChange(current,previous)=> previous==0.0?0.0: (current-previous)/previous*100.0
+roundScore(score)=> math.round(score*10.0)/10.0
+scoreColor(score)=> score>=TREND_HEALTHY?clrBull:score<=TREND_NEUTRAL?clrBear:clrNeutral
+scoreState(score)=> score>=90?"Bull Strong":score>=75?"Bull Healthy":score>=60?"Bull Weak":score>=40?"Neutral":score>=25?"Bear Weak":score>=10?"Bear Healthy":"Bear Strong"
+scoreToState(score)=> score >= 90 ? "Ultra Bull" : score >= 80 ? "Strong Bull" : score >= 65 ? "Healthy Bull" : score >= 45 ? "Neutral" : score >= 25 ? "Healthy Bear" : score >= 10 ? "Strong Bear" : "Ultra Bear"
+weightedScore(score, weight)=> score * weight
+normalize01(value, maxValue) => maxValue == 0.0 ? 0.0 : clamp(value / maxValue, 0.0, 1.0)
 
-safeDivide(a,b)=>
-    b==0.0?0.0:a/b
+//-----------------------------------------------------------------------------
+// Compression Helper
+//-----------------------------------------------------------------------------
 
-normalize(value,minValue,maxValue)=>
-    maxValue==minValue?0.0:
-     clamp(
-        (value-minValue)/(maxValue-minValue)*100.0,
-        0.0,
-        100.0)
-
-normalizeSymmetric(value,maxAbs)=>
+compressionLevel(value, threshold)=>
     clamp(
-        ((value+maxAbs)/(2.0*maxAbs))*100.0,
+        (threshold - value) / threshold,
         0.0,
-        100.0)
-
-percentChange(current,previous)=>
-    previous==0.0?0.0:
-        (current-previous)/previous*100.0
-
-roundScore(score)=>
-    math.round(score*10.0)/10.0
-
-scoreColor(score)=>
-    score>=TREND_HEALTHY?clrBull:
-    score<=TREND_NEUTRAL?clrBear:
-    clrNeutral
-
-scoreState(score)=>
-     score>=90?"Bull Strong":
-     score>=75?"Bull Healthy":
-     score>=60?"Bull Weak":
-     score>=40?"Neutral":
-     score>=25?"Bear Weak":
-     score>=10?"Bear Healthy":
-     "Bear Strong"
+        1.0)
 
 //=============================================================================
-// CORE CONTEXT
+// 5. CONTEXT
 //=============================================================================
 
 ctxOpen = open
@@ -121,62 +137,490 @@ ctxHigh = high
 ctxLow = low
 ctxClose = close
 ctxVolume = volume
-
 ctxEMAFast = ta.ema(close,emaFastLength)
 ctxEMAMid = ta.ema(close,emaMidLength)
 ctxEMASlow = ta.ema(close,emaSlowLength)
-
 ctxATR = ta.atr(atrLength)
 
 //=============================================================================
-// RESERVED
+// 6. ENGINES
 //=============================================================================
 
-// Trend Engine
+//-----------------------------------------------------------------------------
+// 6.1 Market Structure Engine
+//-----------------------------------------------------------------------------
 
-// Structure Engine
+ph = ta.pivothigh(high, pivotLength, pivotLength)
+pl = ta.pivotlow(low, pivotLength, pivotLength)
 
-// Momentum Engine
+//-----------------------------------------------------------------------------
+// Swing Cache
+//-----------------------------------------------------------------------------
 
-// Risk Engine
+var float high1 = na
+var float high2 = na
+var float high3 = na
+var float high4 = na
+var float low1 = na
+var float low2 = na
+var float low3 = na
+var float low4 = na
 
-// Decision Engine
+//-----------------------------------------------------------------------------
+// Update Swing High
+//-----------------------------------------------------------------------------
 
-// Dashboard
+if not na(ph)
+    high4 := high3
+    high3 := high2
+    high2 := high1
+    high1 := ph
 
-// Alert
+//-----------------------------------------------------------------------------
+// Update Swing Low
+//-----------------------------------------------------------------------------
+
+if not na(pl)
+    low4 := low3
+    low3 := low2
+    low2 := low1
+    low1 := pl
+
+//-----------------------------------------------------------------------------
+// Swing Structure
+//-----------------------------------------------------------------------------
+
+bool HH = not na(high2) and high1 > high2
+bool LH = not na(high2) and high1 < high2
+bool HL = not na(low2) and low1 > low2
+bool LL = not na(low2) and low1 < low2
+bool bullStructure = HH and HL
+bool bearStructure = LH and LL
+
+//-----------------------------------------------------------------------------
+// Structure Score
+//-----------------------------------------------------------------------------
+
+float engineStructureScore = 50.0
+int bullCount = 0
+int bearCount = 0
+bullCount += HH ? 1 : 0
+bullCount += HL ? 1 : 0
+bearCount += LH ? 1 : 0
+bearCount += LL ? 1 : 0
+if bullCount == 2
+    engineStructureScore := 100
+else if bullCount == 1
+    engineStructureScore := 75
+else if bearCount == 2
+    engineStructureScore := 0
+else if bearCount == 1
+    engineStructureScore := 25
+else
+    engineStructureScore := 50
+
+//-----------------------------------------------------------------------------
+// Structure State
+//-----------------------------------------------------------------------------
+
+string structureState = engineStructureScore >= 75 ? "Bull" : engineStructureScore <= 25 ? "Bear" : "Range"
+
+//-----------------------------------------------------------------------------
+// 6.2 Trend Alignment Engine
+//-----------------------------------------------------------------------------
+
+bool isBullAlignment = ctxEMAFast > ctxEMAMid and ctxEMAMid > ctxEMASlow
+bool bearOrder = ctxEMAFast < ctxEMAMid and ctxEMAMid < ctxEMASlow
+float fastMidGap = math.abs(ctxEMAFast - ctxEMAMid)
+float midSlowGap = math.abs(ctxEMAMid - ctxEMASlow)
+float gapAverage = (fastMidGap + midSlowGap) / 2.0
+float gapStrength = normalize(safeDivide(gapAverage, ctxATR), 0.0, 2.0)
+float trendAlignmentRaw = isBullAlignment ? gapStrength : bearOrder ? -gapStrength : 0.0
+float engineAlignmentScore = isBullAlignment ? 50.0 + gapStrength * 50.0 : bearOrder ? 50.0 - gapStrength * 50.0 : 50.0
+engineAlignmentScore := roundScore(engineAlignmentScore)
+string trendAlignmentState = scoreToState(engineAlignmentScore)
+
+//-----------------------------------------------------------------------------
+// 6.3 Trend Slope Engine
+//-----------------------------------------------------------------------------
+
+float emaSlopeRaw = ta.sma(ctxEMAFast - ctxEMAFast[1], slopeLookback)
+float trendSlopeRaw = safeDivide(emaSlopeRaw, ctxATR)
+float engineSlopeScore = roundScore(normalize(trendSlopeRaw, -0.50, 0.50))
+string trendSlopeState = scoreToState(engineSlopeScore)
+
+//-----------------------------------------------------------------------------
+// 6.4 Trend Composite Engine
+//-----------------------------------------------------------------------------
+
+float engineTrendScore = engineAlignmentScore * 0.35 + engineSlopeScore * 0.25 + engineStructureScore * 0.40
+engineTrendScore := roundScore(engineTrendScore)
+
+//-----------------------------------------------------------------------------
+// Trend State
+//-----------------------------------------------------------------------------
+
+string trendState = scoreToState(engineTrendScore)
+
+//-----------------------------------------------------------------------------
+// Trend Strength
+//-----------------------------------------------------------------------------
+
+string trendStrength = engineTrendScore >= 90 ? "Extreme" : engineTrendScore >= 75 ? "Strong" : engineTrendScore >= 60 ? "Healthy" : engineTrendScore >= 40 ? "Weak" : "Bear"
+
+//-----------------------------------------------------------------------------
+// 6.5 Impulse Engine
+//-----------------------------------------------------------------------------
+
+// Price Expansion
+
+float priceExpansionRaw = math.abs(ctxClose - ctxClose[impulseLookback])
+float priceExpansionATR = safeDivide(priceExpansionRaw, ctxATR)
+float priceExpansionScore = roundScore(normalize(priceExpansionATR, 0.0, 3.0))
+
+// EMA Expansion
+
+float emaExpansionRaw = math.abs(ctxEMAFast - ctxEMAFast[impulseLookback])
+float emaExpansionATR = safeDivide(emaExpansionRaw, ctxATR)
+float emaExpansionScore = roundScore(normalize(emaExpansionATR, 0.0, 2.0))
+
+// Composite Score
+
+float engineImpulseScore = (priceExpansionScore * 0.60 + emaExpansionScore * 0.40)
+engineImpulseScore := roundScore(engineImpulseScore)
+
+// State
+
+string impulseState = engineImpulseScore >= 80 ? "Strong" : engineImpulseScore >= 60 ? "Healthy" : engineImpulseScore >= 40 ? "Weak" : "Dead"
+
+//-----------------------------------------------------------------------------
+// 6.6 Compression Engine
+//-----------------------------------------------------------------------------
+//
+// Market Principle:
+//
+// Compression
+//      ↓
+// Expansion
+//      ↓
+// Trend
+//      ↓
+// Pullback
+//
+//-----------------------------------------------------------------------------
+
+// ATR Compression
+
+float atrCompressionRaw = safeDivide(ctxATR, ta.sma(ctxATR, compressionLookback))
+float atrCompressionScore = roundScore(compressionLevel(atrCompressionRaw, compressionATRThreshold) * 100.0)
+
+// EMA Compression
+
+float emaSpread = math.abs(ctxEMAFast - ctxEMAMid) + math.abs(ctxEMAMid - ctxEMASlow)
+float emaSpreadATR = safeDivide(emaSpread, ctxATR)
+float emaCompressionScore = roundScore(normalize(2.0 - emaSpreadATR, 0.0, 2.0))
+
+// Range Compression
+
+float highestRange = ta.highest(high, compressionLookback)
+float lowestRange = ta.lowest(low, compressionLookback)
+float rangeATR = safeDivide(highestRange - lowestRange, ctxATR)
+float rangeCompressionScore = roundScore(normalize(6.0 - rangeATR, 0.0, 6.0))
+
+// Composite
+
+float engineCompressionScore = atrCompressionScore * 0.40 + emaCompressionScore * 0.30 + rangeCompressionScore * 0.30
+engineCompressionScore := roundScore(engineCompressionScore)
+
+// State
+
+string compressionState = engineCompressionScore >= 80 ? "Tight" : engineCompressionScore >= 60 ? "Normal" : engineCompressionScore >= 40 ? "Loose" : "Expanded"
+
+//-----------------------------------------------------------------------------
+// 6.7 Volume Engine
+//-----------------------------------------------------------------------------
+
+float volumeMA = ta.sma(volume, 20)
+float volumeRatio = safeDivide(volume, volumeMA)
+float engineVolumeScore = roundScore(normalize(volumeRatio, 0.5, 2.0))
+
+// Volume State
+
+string volumeState = engineVolumeScore >= 80 ? "High" : engineVolumeScore >= 60 ? "Normal" : "Low"
+
+//-----------------------------------------------------------------------------
+// 6.8 Market State Engine
+//-----------------------------------------------------------------------------
+//
+// Market State Machine:
+//
+// COMPRESSION
+//      ↓
+// BREAKOUT (Impulse + Trend)
+//      ↓
+// TRENDING
+//      ↓
+// PULLBACK
+//      ↓
+// RANGE / TRANSITION
+//
+//-----------------------------------------------------------------------------
+
+// State Conditions
+
+bool stateCompression = engineCompressionScore >= 75
+bool stateTrend = engineTrendScore >= 70
+bool stateImpulse = engineImpulseScore >= 70
+
+// Pullback condition (calculated locally for engine independence)
+float _emaDistance = math.abs(ctxClose - ctxEMAFast)
+float _emaDistanceATR = safeDivide(_emaDistance, ctxATR)
+bool _insidePullbackZone = _emaDistanceATR <= pullbackATR
+bool statePullback = _insidePullbackZone and engineTrendScore >= 70
+
+bool stateWeakTrend = engineTrendScore < 45
+
+// Market State (order matters: BREAKOUT before TRENDING, PULLBACK before TRENDING)
+
+string marketState = stateCompression ? "COMPRESSION" : (stateImpulse and stateTrend) ? "BREAKOUT" : statePullback ? "PULLBACK" : stateTrend ? "TRENDING" : stateWeakTrend ? "RANGE" : "TRANSITION"
+
+//-----------------------------------------------------------------------------
+// State Machine - Track Previous State
+//-----------------------------------------------------------------------------
+
+var string previousMarketState = "UNKNOWN"
+
+// Detect state transitions
+bool stateTransition = previousMarketState != marketState and previousMarketState != "UNKNOWN"
+
+// Update previous state at bar confirmation
+if barstate.isconfirmed
+    previousMarketState := marketState
+
+//-----------------------------------------------------------------------------
+// State Duration
+//-----------------------------------------------------------------------------
+
+var int stateDuration = 0
+
+if stateTransition
+    stateDuration := 1
+else
+    stateDuration += 1
+
+//-----------------------------------------------------------------------------
+// 6.9 Confidence Engine
+//-----------------------------------------------------------------------------
+//
+// Trend Confidence = Multi-factor confidence score
+//
+// Formula:
+//   confidence = Trend × 0.5 + Impulse × 0.3 + (100 - Compression) × 0.2
+//
+// This captures three dimensions:
+//   - Trend: Is there a directional bias?
+//   - Impulse: Is momentum confirming the move?
+//   - Compression Relief: Low compression = market is expanding
+//
+//-----------------------------------------------------------------------------
+
+float engineConfidenceScore = engineTrendScore * 0.50 + engineImpulseScore * 0.30 + (100.0 - engineCompressionScore) * 0.20
+engineConfidenceScore := roundScore(engineConfidenceScore)
+
+// Confidence State
+
+string confidenceState = engineConfidenceScore >= 75 ? "High" : engineConfidenceScore >= 50 ? "Moderate" : engineConfidenceScore >= 25 ? "Low" : "Very Low"
+
+//-----------------------------------------------------------------------------
+// 6.10 Breakout Engine
+//-----------------------------------------------------------------------------
+//
+// Breakout Probability = Multi-factor breakout detection
+//
+// Components:
+//   - Compression: 35% (tight markets break out)
+//   - Impulse: 35% (momentum confirms the break)
+//   - Trend: 20% (trend direction supports breakout)
+//   - Volume: 10% (volume confirmation)
+//
+//-----------------------------------------------------------------------------
+
+float breakoutRaw = engineCompressionScore * 0.35 + engineImpulseScore * 0.35 + engineTrendScore * 0.20 + engineVolumeScore * 0.10
+float engineBreakoutScore = roundScore(breakoutRaw)
+
+// Breakout State
+
+string breakoutState = engineBreakoutScore >= breakoutThreshold + 20 ? "CONFIRMED" : engineBreakoutScore >= breakoutThreshold ? "EARLY" : "NONE"
+
+//-----------------------------------------------------------------------------
+// 6.11 Direction Engine
+//-----------------------------------------------------------------------------
+//
+// Direction Engine
+//
+// Purpose:
+// Determine market directional bias
+//
+// Factors:
+//   - Trend Alignment 40%
+//   - Structure 30%
+//   - Momentum 20%
+//   - EMA Position 10%
+//
+// Output:
+// LONG / SHORT / NEUTRAL
+//
+//-----------------------------------------------------------------------------
+
+// EMA Position
+
+float emaPositionScore =
+     ctxClose > ctxEMAFast and ctxEMAFast > ctxEMAMid ? 100.0 :
+     ctxClose < ctxEMAFast and ctxEMAFast < ctxEMAMid ? 0.0 :
+     50.0
+
+// Direction Composite
+
+float engineDirectionScore =
+     engineAlignmentScore * 0.40 +
+     engineStructureScore * 0.30 +
+     engineImpulseScore * 0.20 +
+     emaPositionScore * 0.10
+
+engineDirectionScore := roundScore(engineDirectionScore)
+
+// Direction State
+
+string tradeDirection =
+     engineDirectionScore >= 65 ? "LONG" :
+     engineDirectionScore <= 35 ? "SHORT" :
+     "NEUTRAL"
+
+//-----------------------------------------------------------------------------
+// 6.12 Pullback Engine
+//-----------------------------------------------------------------------------
+//
+// Pullback = Trend + Impulse + Compression + Market State
+// Market State must be TRENDING for valid pullback
+//
+//-----------------------------------------------------------------------------
+
+float emaDistance = math.abs(ctxClose - ctxEMAFast)
+float emaDistanceATR = safeDivide(emaDistance, ctxATR)
+bool insidePullbackZone = emaDistanceATR <= pullbackATR
+
+bool healthyBullPullback = marketState == "TRENDING" and engineTrendScore >= 75 and engineImpulseScore >= 60 and engineCompressionScore <= 60 and ctxClose > ctxEMAMid and ctxClose < ctxEMAFast and insidePullbackZone
+bool healthyBearPullback = marketState == "TRENDING" and engineTrendScore <= 25 and engineImpulseScore >= 60 and engineCompressionScore <= 60 and ctxClose < ctxEMAMid and ctxClose > ctxEMAFast and insidePullbackZone
+
+float enginePullbackScore = healthyBullPullback or healthyBearPullback ? 100.0 : insidePullbackZone ? 70.0 : 0.0
+
+//-----------------------------------------------------------------------------
+// 6.13 Signal Engine
+//-----------------------------------------------------------------------------
+//
+// Signal Architecture:
+//
+// Market Context
+//        ↓
+// Direction Bias
+//        ↓
+// Signal Score
+//        ↓
+// Trading Readiness
+//
+// Components:
+// Trend       40%
+// Impulse     20%
+// Breakout    20%
+// Confidence  20%
+//
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// Direction Bias
+//-----------------------------------------------------------------------------
+
+bool longBias =
+     engineTrendScore >= 65 and
+     engineStructureScore >= 50 and
+     marketState != "RANGE" and
+     engineConfidenceScore >= 50
+
+bool shortBias =
+     engineTrendScore <= 35 and
+     engineStructureScore <= 50 and
+     marketState != "RANGE" and
+     engineConfidenceScore >= 50
+
+//-----------------------------------------------------------------------------
+// Signal Composite Score
+//-----------------------------------------------------------------------------
+
+float engineSignalScore =
+     engineTrendScore * 0.40 +
+     engineImpulseScore * 0.20 +
+     engineBreakoutScore * 0.20 +
+     engineConfidenceScore * 0.20
+
+engineSignalScore := roundScore(engineSignalScore)
+
+//-----------------------------------------------------------------------------
+// Signal State
+//-----------------------------------------------------------------------------
+
+string signalState =
+     engineSignalScore >= 75 ? "READY" :
+     engineSignalScore >= 60 ? "SETUP" :
+     engineSignalScore >= 40 ? "WATCH" :
+     "NO TRADE"
+
+//-----------------------------------------------------------------------------
+// Signal Direction
+//-----------------------------------------------------------------------------
+
+string signalDirection =
+     longBias ? "LONG" :
+     shortBias ? "SHORT" :
+     "NEUTRAL"
 
 //=============================================================================
-// PLOT
+// 7. DISPLAY
 //=============================================================================
 
-plot(
-    showEMA?ctxEMAFast:na,
-    title="EMA Fast",
-    color=color.green,
-    linewidth=2)
+//-----------------------------------------------------------------------------
+// 7.1 EMAs
+//-----------------------------------------------------------------------------
 
-plot(
-    showEMA?ctxEMAMid:na,
-    title="EMA Middle",
-    color=color.orange,
-    linewidth=2)
+plot(showEMA ? ctxEMAFast : na, title = "EMA Fast", color = color.green, linewidth = 2)
+plot(showEMA ? ctxEMAMid : na, title = "EMA Middle", color = color.orange, linewidth = 2)
+plot(showEMA ? ctxEMASlow : na, title = "EMA Slow", color = color.red, linewidth = 2)
 
-plot(
-    showEMA?ctxEMASlow:na,
-    title="EMA Slow",
-    color=color.red,
-    linewidth=2)
+//-----------------------------------------------------------------------------
+// 7.2 Background
+//-----------------------------------------------------------------------------
+
+bgcolor(showBackground ? color.new(scoreColor(engineTrendScore), 90) : na)
+
+//-----------------------------------------------------------------------------
+// 7.3 Pullback Shapes
+//-----------------------------------------------------------------------------
+
+plotshape(healthyBullPullback, title = "Bull Pullback", style = shape.circle, location = location.belowbar, color = color.lime, size = size.tiny)
+plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, location = location.abovebar, color = color.red, size = size.tiny)
 
 //=============================================================================
-// DEBUG
+// 8. DEBUG
 //=============================================================================
 
-if debugMode
-    label.new(
-        bar_index,
-        high,
-        "CTS Alpha\nCommit0001",
-        style=label.style_label_down,
-        color=color.blue,
-        textcolor=color.white)
+//-----------------------------------------------------------------------------
+// 8.1 Debug Label (Engine Dashboard)
+//-----------------------------------------------------------------------------
+
+var label debugLabel = na
+
+debugText = "CTS Alpha v0.5.5" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " ⚡" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection
+
+if debugMode and barstate.islast
+    if not na(debugLabel)
+        label.delete(debugLabel)
+    debugLabel := label.new(bar_index, high, debugText, style = label.style_label_down, color = scoreColor(engineTrendScore), textcolor = color.white)
