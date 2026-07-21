@@ -2,13 +2,13 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.5.5
-// Commit  : 0014.0
+// Version : v0.6.0
+// Commit  : 0015.0
 // Stage   : Sprint 003
 //
 // Description:
-// CTS Alpha Trading Framework - Direction Engine
-// Direction = Alignment×40% + Structure×30% + Impulse×20% + EMA Position×10%
+// CTS Alpha Trading Framework - Decision Engine
+// Decision = Direction×35% + Signal×35% + Confidence×20% + Breakout×10%
 //
 // Repository:
 // https://github.com/yueyh-123/CTS-Alpha
@@ -583,6 +583,46 @@ string signalDirection =
      shortBias ? "SHORT" :
      "NEUTRAL"
 
+//-----------------------------------------------------------------------------
+// 6.14 Decision Engine
+//-----------------------------------------------------------------------------
+//
+// Decision = Direction + Signal + Confidence + Breakout
+// Output : BUY NOW / BUY READY / WAIT / SELL READY / SELL NOW / AVOID
+//
+//-----------------------------------------------------------------------------
+
+// Composite Decision Score
+float engineDecisionScore = engineDirectionScore * 0.35 + engineSignalScore * 0.35 + engineConfidenceScore * 0.20 + engineBreakoutScore * 0.10
+engineDecisionScore := roundScore(clamp(engineDecisionScore, 0.0, 100.0))
+
+// Decision State
+string decisionState = "WAIT"
+
+// Strong Long
+if marketState != "RANGE" and tradeDirection == "LONG" and engineDecisionScore >= 85 and breakoutState == "CONFIRMED"
+    decisionState := "BUY NOW"
+
+// Long Setup
+else if marketState != "RANGE" and tradeDirection == "LONG" and engineDecisionScore >= 70
+    decisionState := "BUY READY"
+
+// Strong Short
+else if marketState != "RANGE" and tradeDirection == "SHORT" and engineDecisionScore <= 15 and breakoutState == "CONFIRMED"
+    decisionState := "SELL NOW"
+
+// Short Setup
+else if marketState != "RANGE" and tradeDirection == "SHORT" and engineDecisionScore <= 30
+    decisionState := "SELL READY"
+
+// Avoid Range
+else if marketState == "RANGE" and engineCompressionScore < 50
+    decisionState := "AVOID"
+
+// Default
+else
+    decisionState := "WAIT"
+
 //=============================================================================
 // 7. DISPLAY
 //=============================================================================
@@ -618,7 +658,7 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 var label debugLabel = na
 
-debugText = "CTS Alpha v0.5.5" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " ⚡" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection
+debugText = "CTS Alpha v0.6.0" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " ⚡" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore)
 
 if debugMode and barstate.islast
     if not na(debugLabel)
