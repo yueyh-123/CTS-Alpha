@@ -2,13 +2,28 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.8.4
-// Commit  : 0025.0
-// Stage   : Sprint 006.4.3 - Next Action Engine V2
+// Version : v0.9.2
+// Commit  : 0028.0
+// Stage   : Task 007.2.1 - Pullback Context Filter
 //
 // Description:
 // CTS Alpha Trading Framework - Execution Layer
-// Decision Engine with Entry Integration
+// Entry Engine V2 with Position Quality & Momentum Exhaustion
+//
+// Changes Commit 0028.0:
+// - Added Pullback Context Score (Market State awareness)
+// - Modified Pullback Composite Formula (Distance 30%, Trend 25%, Structure 30%, Context 15%)
+// - Modified Pullback Grade Logic (A requires Context >= 80)
+// - Added PB Context display in Dashboard
+// - Reduced false high-quality pullback in TRANSITION/RANGE markets
+//
+// Changes Commit 0027.0:
+// - Added Position Quality Engine
+// - Added Momentum Exhaustion Engine
+// - Entry Score Model V2 (Trend 30% + Pullback 30% + Position 20% + Momentum 20%)
+// - Entry State Classification V2 (IDEAL ENTRY / GOOD ENTRY / WAIT PULLBACK / OVEREXTENDED / NO ENTRY)
+// - Improved Anti Chase Protection
+// - Better Entry Timing
 //
 // Changes Commit 0025.0:
 // - Added Next Trigger Engine
@@ -55,13 +70,6 @@
 // - Added Entry Quality weighting (25%) to Decision Score
 // - Added Entry validation for BUY/SELL execution states
 // - Reduced false execution caused by overextended moves
-//
-// Previous Commit 0019.0 changes:
-// - Added Pullback Validation Metrics Layer (PB Grade, PB Dominant, PB Trend Efficiency)
-// - PB Grade: A (80-100), B (60-79), C (40-59), D (0-39)
-// - PB Dominant: Identifies largest contributing factor (DISTANCE/TREND/STRUCTURE)
-// - PB Trend Efficiency: Pullback quality relative to trend strength (clamped 0-200%)
-// - Improved pullback debug transparency with full sub-component display
 //
 // Repository:
 // https://github.com/yueyh-123/CTS-Alpha
@@ -558,11 +566,12 @@ string tradeDirection =
 // Purpose:
 // Evaluate pullback quality continuously
 //
-// Components:
+// Components V2:
 //
-// Distance Quality   40%
-// Trend Alignment    30%
+// Distance Quality   30%
+// Trend Alignment    25%
 // Structure Quality  30%
+// Market Context     15%
 //
 // Output:
 // 0 - 100
@@ -620,13 +629,48 @@ float pbTrendScore =
 float pbStructureScore = engineStructureScore
 
 //-----------------------------------------------------------------------------
-// Composite Pullback Quality
+// 4. Market Context Quality
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+//
+// Evaluate whether current market environment
+// supports a valid pullback.
+//
+// Strong trend:
+// High confidence pullback
+//
+// Transition:
+// Reduce pullback confidence
+//
+//-----------------------------------------------------------------------------
+
+float pullbackContextScore =
+     marketState == "TRENDING" ? 100.0 :
+     marketState == "PULLBACK" ? 90.0 :
+     marketState == "BREAKOUT" ? 85.0 :
+     marketState == "COMPRESSION" ? 60.0 :
+     marketState == "TRANSITION" ? 50.0 :
+     30.0
+
+//-----------------------------------------------------------------------------
+// Composite Pullback Quality V2
+//-----------------------------------------------------------------------------
+//
+// Components:
+//
+// Distance Quality    30%
+// Trend Alignment     25%
+// Structure Quality   30%
+// Market Context      15%
+//
 //-----------------------------------------------------------------------------
 
 float enginePullbackScore =
-     pbDistanceScore * 0.40 +
-     pbTrendScore * 0.30 +
-     pbStructureScore * 0.30
+     pbDistanceScore * 0.30 +
+     pbTrendScore * 0.25 +
+     pbStructureScore * 0.30 +
+     pullbackContextScore * 0.15
 
 enginePullbackScore := roundScore(clamp(enginePullbackScore, 0.0, 100.0))
 
@@ -652,7 +696,7 @@ string pbDominant =
 
 // Pullback Grade
 string pbGrade =
-     enginePullbackScore >= 80 ? "A" :
+     enginePullbackScore >= 80 and pullbackContextScore >= 80 ? "A" :
      enginePullbackScore >= 60 ? "B" :
      enginePullbackScore >= 40 ? "C" :
      "D"
@@ -798,53 +842,95 @@ string riskState =
      "AVOID"
 
 //-----------------------------------------------------------------------------
-// 6.15 Entry Engine
+// 6.15 Entry Engine V2
 //-----------------------------------------------------------------------------
 //
-// Entry Engine v0.2
+// Entry Engine V2
 //
 // Purpose:
 // Evaluate if current price is a good entry position
 //
-// Entry Quality =
-//   Trend Allowance (50%)
-// + Pullback Opportunity (30%)
-// + Distance Risk (20%)
-//
-// Components:
-//   - entryTrendScore: Reuses engineTrendScore (trend quality)
-//   - entryPullbackScore: Pullback condition score
-//   - entryDistancePenalty: Penalty based on EMA distance
+// Entry Quality V2 =
+//   Trend Quality      30%
+// + Pullback Quality   30%
+// + Position Quality   20%
+// + Momentum Condition 20%
 //
 // Output:
-// IDEAL   (>=80)
-// GOOD    (60-79)
-// FAIR    (40-59)
-// POOR    (<40)
+// IDEAL ENTRY   (>=85)
+// GOOD ENTRY    (>=70)
+// WAIT PULLBACK (>=50)
+// OVEREXTENDED  (>=30)
+// NO ENTRY      (<30)
 //
 //-----------------------------------------------------------------------------
 
-// Trend Allowance (50%)
+//-----------------------------------------------------------------------------
+// Trend Quality (30%)
+//-----------------------------------------------------------------------------
+
 float entryTrendScore = engineTrendScore
 
-// Pullback Opportunity (30%)
+//-----------------------------------------------------------------------------
+// Pullback Quality (30%)
+//-----------------------------------------------------------------------------
+
 float entryPullbackScore =
      healthyBullPullback or healthyBearPullback ? 100.0 :
      insidePullbackZone ? 70.0 :
      40.0
 
-// Distance Risk (20%)
-float entryDistancePenalty =
-     emaDistanceATR > 2.0 ? 30.0 :
-     emaDistanceATR > 1.5 ? 15.0 :
+//-----------------------------------------------------------------------------
+// Position Quality (20%)
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+//
+// Evaluate current price location.
+//
+// Good entry:
+// Close near EMA.
+//
+// Bad entry:
+// Price extended away from EMA.
+//
+//-----------------------------------------------------------------------------
+
+float entryPositionScore =
+     emaDistanceATR <= 0.5 ? 100.0 :
+     emaDistanceATR <= 1.0 ? 80.0 :
+     emaDistanceATR <= 1.5 ? 50.0 :
+     emaDistanceATR <= 2.0 ? 20.0 :
      0.0
 
-// Entry Score Calculation
-// Weighted multi-factor formula
+//-----------------------------------------------------------------------------
+// Momentum Exhaustion Engine (20%)
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+//
+// Detect excessive short-term expansion.
+//
+// Prevent chasing strong moves.
+//
+//-----------------------------------------------------------------------------
+
+float bullishBarCount = math.sum(close > close[1] ? 1 : 0, 5)
+
+float entryMomentumScore =
+     priceExpansionATR > 2.0 and bullishBarCount >= 4 ? 30.0 :
+     priceExpansionATR > 1.5 ? 50.0 :
+     80.0
+
+//-----------------------------------------------------------------------------
+// Entry Score Calculation V2
+//-----------------------------------------------------------------------------
+
 float engineEntryScore =
-     entryTrendScore * 0.50 +
+     entryTrendScore * 0.30 +
      entryPullbackScore * 0.30 +
-     (100.0 - entryDistancePenalty) * 0.20
+     entryPositionScore * 0.20 +
+     entryMomentumScore * 0.20
 
 engineEntryScore := roundScore(clamp(engineEntryScore, 0.0, 100.0))
 
@@ -856,15 +942,19 @@ engineEntryScore := roundScore(clamp(engineEntryScore, 0.0, 100.0))
 if engineTrendScore < 40
     engineEntryScore := 0
 
-// Entry State
-string entryState = "POOR"
-if engineEntryScore >= 80
-    entryState := "IDEAL"
-else if engineEntryScore >= 60
-    entryState := "GOOD"
-else if engineEntryScore >= 40
-    entryState := "FAIR"
+//-----------------------------------------------------------------------------
+// Entry State V2
+//-----------------------------------------------------------------------------
 
+string entryState = "NO ENTRY"
+if engineEntryScore >= 85
+    entryState := "IDEAL ENTRY"
+else if engineEntryScore >= 70
+    entryState := "GOOD ENTRY"
+else if engineEntryScore >= 50
+    entryState := "WAIT PULLBACK"
+else if engineEntryScore >= 30
+    entryState := "OVEREXTENDED"
 
 //-----------------------------------------------------------------------------
 // 6.15.5 Decision Foundation Engine
@@ -1415,7 +1505,7 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 //=============================================================================
 // 8. DEBUG
-//=============== $0==============================================================
+//=============================================================================
 
 //-----------------------------------------------------------------------------
 // 8.1 Debug Label (Engine Dashboard)
@@ -1423,7 +1513,8 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 var label debugLabel = na
 
-debugText = "CTS Alpha v0.8.4" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+debugText = "CTS Alpha v0.9.2" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+
 if debugMode
     if na(debugLabel)
         debugLabel := label.new(
