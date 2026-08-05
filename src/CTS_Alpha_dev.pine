@@ -2,90 +2,43 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.9.4
-// Commit  : 0030.0
-// Stage   : Task 007.3.1 - Structure Entry Price Engine
+// Version : v0.9.5
+// Commit  : 0032.0
+// Stage   : Task 007.3.2.1 - Structure Direction Alignment Engine
 //
 // Description:
 // CTS Alpha Trading Framework - Execution Layer
-// Entry Engine V3 with Context Alignment & Impulse Alignment
+// Structure Direction Alignment Engine
+//
+// Changes Commit 0032.0:
+// - Added Structure Direction Alignment Engine (Task 007.3.2.1)
+//   - Evaluates consistency between market structure and trade direction
+//   - Bull Structure + LONG = ALIGNED (100)
+//   - Bear Structure + SHORT = ALIGNED (100)
+//   - Bull Structure + SHORT = CONFLICT (25)
+//   - Bear Structure + LONG = CONFLICT (25)
+// - Modified Execution Quality formula
+//   - Entry 50% → 40%
+//   - Risk 30% → 25%
+//   - Direction Quality 20% (unchanged)
+//   - Structure Alignment 15% (new)
+// - Added Structure Alignment display in Dashboard
+// - Reduced execution confidence during structural conflict
+//
+// Changes Commit 0031.0:
+// - Direction Adaptive Entry Price Engine (Task 007.3.2)
+//   - LONG: Entry = StructurePrice - Adjustment (buy pullback)
+//   - SHORT: Entry = StructurePrice + Adjustment (sell rally)
+//   - NEUTRAL: Entry = StructurePrice (no adjustment)
+// - Entry Engine → Trade Setup Integration (Task 007.3.3)
+//   - tradeEntryPrice now uses engineEntryPrice instead of close
+//   - Complete integration: Decision → Entry → Trade Setup → Risk
 //
 // Changes Commit 0030.0:
 // - Added Structure Entry Price Engine
 // - Added engineEntryPrice calculation based on EMA20 + EMA60 midpoint
 // - Added price adjustment based on Position Score
 // - Added Entry Price display in Dashboard
-// - Trade Setup Entry remains NA (not yet connected)
-//
-// Changes Commit 0029.0:
-// - Added Entry Context Score (Market State awareness for Entry)
-// - Added Impulse Alignment Score (Momentum support for Entry)
-// - Entry Score Formula V3 (Trend 25%, Pullback 25%, Position 20%, Momentum 15%, Context 15%)
-// - Entry State Protection (IDEAL requires Context >= 80, GOOD requires Context >= 60)
-// - Added Entry Context & Impulse Alignment display in Dashboard
-// - Prevent high Entry score in poor market conditions
-// - Better synchronization between Engines
-//
-// Changes Commit 0028.0:
-// - Added Pullback Context Score (Market State awareness)
-// - Modified Pullback Composite Formula (Distance 30%, Trend 25%, Structure 30%, Context 15%)
-// - Modified Pullback Grade Logic (A requires Context >= 80)
-// - Added PB Context display in Dashboard
-// - Reduced false high-quality pullback in TRANSITION/RANGE markets
-//
-// Changes Commit 0027.0:
-// - Added Position Quality Engine
-// - Added Momentum Exhaustion Engine
-// - Entry Score Model V2 (Trend 30% + Pullback 30% + Position 20% + Momentum 20%)
-// - Entry State Classification V2 (IDEAL ENTRY / GOOD ENTRY / WAIT PULLBACK / OVEREXTENDED / NO ENTRY)
-// - Improved Anti Chase Protection
-// - Better Entry Timing
-//
-// Changes Commit 0025.0:
-// - Added Next Trigger Engine
-// - Added Trigger display in Dashboard
-// - Complete decision chain: Market → Signal → Decision → Reason → Next Action → Trigger
-//
-// Changes Commit 0024.0:
-// - Added Direction Explain Engine
-// - Added Decision Detail Reason for Direction Neutral
-// - Dashboard now displays Detail for Direction Neutral
-// - Improved decision transparency with multi-level reasoning
-//
-// Changes Commit 0023.0:
-// - Added Decision Quality Engine
-// - Decision Quality maps Decision Score to EXCELLENT/GOOD/FAIR/POOR/BAD
-// - Dashboard now displays Decision Quality
-// - Improved decision transparency
-//
-// Changes Commit 0022.1:
-// - Added Next Action Engine
-// - Dashboard now displays Next Action
-// - Complete decision chain: Market → Signal → Decision → Reason → Next Action
-//
-// Changes Commit 0022.0:
-// - Added Decision Explain Engine
-// - Added execution blocking reason
-// - Dashboard now displays Decision Reason
-// - Improved execution transparency
-//
-// Changes Commit 0021.2:
-// - Added Execution Guard: Trade Setup only generated after Decision approval
-// - Entry/Stop/Target/RR now return NA when Decision != BUY/SELL READY/NOW
-// - Dashboard displays NA for all trade setup fields when execution not allowed
-//
-// Changes Commit 0021.1:
-// - Added Direction Guard to Trade Setup Engine (NEUTRAL → na)
-// - Stop Loss now correctly returns na for NEUTRAL direction
-// - Target now correctly returns na for NEUTRAL direction
-// - Risk Reward now returns na for NEUTRAL direction
-// - Added Trade Setup debug output to dashboard
-//
-// Changes Commit 0020.0:
-// - Integrated Entry Engine into Decision Score
-// - Added Entry Quality weighting (25%) to Decision Score
-// - Added Entry validation for BUY/SELL execution states
-// - Reduced false execution caused by overextended moves
 //
 // Repository:
 // https://github.com/yueyh-123/CTS-Alpha
@@ -1030,13 +983,71 @@ else if engineEntryScore >= 30
 float entryStructurePrice =
      (ctxEMAFast + ctxEMAMid) / 2
 
-float entryPriceAdjustment =
-     entryPositionScore >= 80 ? 0 :
+//-----------------------------------------------------------------------------
+// Direction Adaptive Entry Price Adjustment (Task 007.3.2)
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+// Adjust entry price based on trade direction.
+//
+// LONG:
+//   Buy on pullback → price below structure
+//   Entry = StructurePrice - Adjustment
+//
+// SHORT:
+//   Sell on rally → price above structure
+//   Entry = StructurePrice + Adjustment
+//
+// NEUTRAL:
+//   No direction → neutral price
+//   Entry = StructurePrice
+//
+//-----------------------------------------------------------------------------
+
+// Base adjustment from Position Score
+float baseAdjustment =
+     entryPositionScore >= 80 ? 0.0 :
      entryPositionScore >= 60 ? ctxATR * 0.25 :
      ctxATR * 0.5
 
+// Direction Adaptive Entry Price
 float engineEntryPrice =
-     entryStructurePrice - entryPriceAdjustment
+     tradeDirection == "LONG"
+          ? entryStructurePrice - baseAdjustment
+          : tradeDirection == "SHORT"
+               ? entryStructurePrice + baseAdjustment
+               : entryStructurePrice
+
+//-----------------------------------------------------------------------------
+// 6.15.4 Structure Direction Alignment Engine
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+//
+// Evaluate whether market structure
+// supports current trading direction.
+//
+// Bull Structure + LONG
+// Bear Structure + SHORT
+// = Alignment
+//
+// Conflict:
+// Bull Structure + SHORT
+// Bear Structure + LONG
+//
+//-----------------------------------------------------------------------------
+
+float engineStructureDirectionScore =
+     engineStructureScore >= 75 and tradeDirection == "LONG" ? 100.0 :
+     engineStructureScore <= 25 and tradeDirection == "SHORT" ? 100.0 :
+     engineStructureScore >= 75 and tradeDirection == "SHORT" ? 25.0 :
+     engineStructureScore <= 25 and tradeDirection == "LONG" ? 25.0 :
+     50.0
+
+string structureDirectionState =
+     engineStructureDirectionScore >= 80 ? "ALIGNED" :
+     engineStructureDirectionScore <= 30 ? "CONFLICT" :
+     "MIXED"
 
 //-----------------------------------------------------------------------------
 // 6.15.5 Decision Foundation Engine
@@ -1168,21 +1179,23 @@ directionQualityScore :=
 
 
 //-----------------------------------------------------------------------------
-// Execution Quality Score
+// Execution Quality Score (Modified Commit 0032.0)
 //-----------------------------------------------------------------------------
 //
 // Components:
 //
-// Entry Quality       50%
-// Risk Quality        30%
-// Direction Quality   20%
+// Entry Quality            40%
+// Risk Quality             25%
+// Direction Quality        20%
+// Structure Direction Align 15%
 //
 //-----------------------------------------------------------------------------
 
 float engineExecutionScore =
-     engineEntryScore * 0.50 +
-     engineRiskScore * 0.30 +
-     directionQualityScore * 0.20
+     engineEntryScore * 0.40 +
+     engineRiskScore * 0.25 +
+     directionQualityScore * 0.20 +
+     engineStructureDirectionScore * 0.15
 
 engineExecutionScore :=
      roundScore(clamp(engineExecutionScore,0.0,100.0))
@@ -1352,6 +1365,12 @@ else if breakoutState == "NONE"
 else if engineConfidenceScore < 50
     decisionReason := "Confidence Too Low"
 
+// Structure Direction Conflict
+// Added in Commit 0032.0
+
+else if engineStructureDirectionScore <= 30
+    decisionReason := "Structure Direction Conflict"
+
 // Waiting
 
 else if decisionState == "WAIT"
@@ -1408,6 +1427,9 @@ else if decisionReason == "Confidence Too Low"
 else if decisionReason == "Range Market"
     nextAction := "Stay Out"
 
+else if decisionReason == "Structure Direction Conflict"
+    nextAction := "Wait Structure Realignment"
+
 // Default
 
 else
@@ -1428,6 +1450,7 @@ else
 // Waiting Breakout → Breakout Score Above Threshold
 // Trend Too Weak → Trend Score Recovery
 // Confidence Too Low → Confidence Recovery
+// Structure Direction Conflict → Structure Realignment
 //
 //-----------------------------------------------------------------------------
 
@@ -1454,6 +1477,9 @@ else if decisionReason == "Confidence Too Low"
 else if decisionReason == "Range Market"
     nextTrigger := "Compression or Breakout"
 
+else if decisionReason == "Structure Direction Conflict"
+    nextTrigger := "Structure Score Aligns with Direction"
+
 else if decisionReason == "Waiting Better Setup"
     nextTrigger := "Decision Score > 60"
 
@@ -1478,7 +1504,7 @@ else
 // Take Profit
 // Risk Reward Ratio
 //
-// v0.8.2 Commit 0021.2
+// v0.9.5 Commit 0032.0
 //
 // Execution Guard:
 // - Only generate Trade Setup after Decision approval
@@ -1489,6 +1515,10 @@ else
 // - LONG  → valid Long Plan (Stop = Entry - 2ATR, Target = Entry + 4ATR)
 // - SHORT → valid Short Plan (Stop = Entry + 2ATR, Target = Entry - 4ATR)
 // - NEUTRAL → no Plan (Stop = na, Target = na, RR = na)
+//
+// Integration (Task 007.3.3):
+// - tradeEntryPrice now uses engineEntryPrice instead of close
+// - Complete flow: Decision → Entry Engine → Trade Setup → Risk
 //
 //-----------------------------------------------------------------------------
 
@@ -1515,12 +1545,26 @@ bool executionAllowed =
      decisionState == "SELL NOW" or
      decisionState == "SELL READY"
 
-// Entry Price
+//-----------------------------------------------------------------------------
+// Entry Price (Task 007.3.3)
+//-----------------------------------------------------------------------------
+//
+// Now uses engineEntryPrice instead of close
+//
+// Complete integration:
+// Decision Engine → Entry Engine → Trade Setup
+//
+//-----------------------------------------------------------------------------
 
-float tradeEntryPrice = executionAllowed ? close : na
+float tradeEntryPrice =
+     executionAllowed
+          ? engineEntryPrice
+          : na
 
+//-----------------------------------------------------------------------------
 // Stop Loss
 // Direction Guard + Execution Guard
+//-----------------------------------------------------------------------------
 
 float tradeATR = ta.atr(14)
 
@@ -1537,8 +1581,10 @@ float tradeStopLoss =
 
 float tradeRiskDistance = not na(tradeStopLoss) ? math.abs(tradeEntryPrice - tradeStopLoss) : na
 
+//-----------------------------------------------------------------------------
 // Take Profit
 // Direction Guard + Execution Guard
+//-----------------------------------------------------------------------------
 
 float tradeTarget =
      executionAllowed
@@ -1549,8 +1595,10 @@ float tradeTarget =
                : na
      : na
 
+//-----------------------------------------------------------------------------
 // Risk Reward
 // Returns na when Execution not allowed or NEUTRAL
+//-----------------------------------------------------------------------------
 
 float tradeRiskReward =
      executionAllowed and
@@ -1595,7 +1643,7 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 var label debugLabel = na
 
-debugText = "CTS Alpha v0.9.4" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Price : " + str.tostring(engineEntryPrice) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+debugText = "CTS Alpha v0.9.5 (Commit 0032.0)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
 
 if debugMode
     if na(debugLabel)
