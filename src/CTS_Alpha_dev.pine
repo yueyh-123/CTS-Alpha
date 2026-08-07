@@ -2,13 +2,24 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.9.5
-// Commit  : 0032.0
-// Stage   : Task 007.3.2.1 - Structure Direction Alignment Engine
+// Version : v0.9.6
+// Commit  : 0033.0
+// Stage   : Task 008.1 - Execution Guard Engine
 //
 // Description:
 // CTS Alpha Trading Framework - Execution Layer
-// Structure Direction Alignment Engine
+// Execution Guard Engine
+//
+// Changes Commit 0033.0:
+// - Added Execution Guard Engine (Task 008.1)
+//   - Default BLOCK, only ALLOW after all conditions pass
+//   - 5 gates: Decision, Direction, Structure, Risk, Entry
+// - Modified Trade Setup Engine
+//   - executionAllowed now uses executionGate == "ALLOW"
+//   - Complete flow: Decision → Guard → Trade Setup
+// - Added Dashboard Display for Execution Gate
+//   - Execution Gate: ALLOW / BLOCK
+//   - Gate Reason: Block reason or All Conditions Passed
 //
 // Changes Commit 0032.0:
 // - Added Structure Direction Alignment Engine (Task 007.3.2.1)
@@ -1490,6 +1501,94 @@ else
     nextTrigger := "No Trigger"
 
 //-----------------------------------------------------------------------------
+// 6.16.4 Execution Guard Engine
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+//
+// Execution Guard acts as a gate between Decision Engine
+// and Trade Setup Engine.
+//
+// Architecture:
+//
+// Decision Engine
+//        ↓
+// Execution Guard   ← NEW
+//        ↓
+// Trade Setup
+//
+// Core Principle:
+// Default BLOCK, only ALLOW after all conditions pass.
+//
+// 5 Gates:
+// 1. Decision Gate  → Decision State must be BUY/SELL NOW/READY
+// 2. Direction Gate → Direction must be LONG or SHORT (not NEUTRAL)
+// 3. Structure Gate → Structure Direction Score >= 50
+// 4. Risk Gate      → Risk State must not be AVOID
+// 5. Entry Gate     → Entry State must be IDEAL or GOOD
+//
+//-----------------------------------------------------------------------------
+
+// Execution Guard State Variables
+
+string executionGate = "BLOCK"
+string executionBlockReason = "NONE"
+
+//-----------------------------------------------------------------------------
+// Execution Guard Logic
+//-----------------------------------------------------------------------------
+//
+// Core Principle:
+// Default BLOCK
+// Satisfy all conditions → ALLOW
+//
+//-----------------------------------------------------------------------------
+
+bool gateDirectionOK =
+     tradeDirection == "LONG" or
+     tradeDirection == "SHORT"
+
+bool gateStructureOK =
+     engineStructureDirectionScore >= 50
+
+bool gateRiskOK =
+     riskState != "AVOID"
+
+bool gateEntryOK =
+     entryState == "IDEAL ENTRY" or
+     entryState == "GOOD ENTRY"
+
+bool gateDecisionOK =
+     decisionState == "BUY NOW" or
+     decisionState == "BUY READY" or
+     decisionState == "SELL NOW" or
+     decisionState == "SELL READY"
+
+if not gateDecisionOK
+    executionGate := "BLOCK"
+    executionBlockReason := "Decision Not Approved"
+
+else if not gateDirectionOK
+    executionGate := "BLOCK"
+    executionBlockReason := "Direction Neutral"
+
+else if not gateStructureOK
+    executionGate := "BLOCK"
+    executionBlockReason := "Structure Conflict"
+
+else if not gateRiskOK
+    executionGate := "BLOCK"
+    executionBlockReason := "Risk Avoid"
+
+else if not gateEntryOK
+    executionGate := "BLOCK"
+    executionBlockReason := "Entry Quality Low"
+
+else
+    executionGate := "ALLOW"
+    executionBlockReason := "All Conditions Passed"
+
+//-----------------------------------------------------------------------------
 // 6.17 Trade Setup Engine
 //-----------------------------------------------------------------------------
 //
@@ -1504,11 +1603,12 @@ else
 // Take Profit
 // Risk Reward Ratio
 //
-// v0.9.5 Commit 0032.0
+// v0.9.6 Commit 0033.0
 //
-// Execution Guard:
-// - Only generate Trade Setup after Decision approval
-// - BUY READY / BUY NOW / SELL READY / SELL NOW → valid Plan
+// Execution Guard Integration:
+// - executionAllowed now uses executionGate == "ALLOW"
+// - Complete flow: Decision → Guard → Trade Setup
+// - BUY READY / BUY NOW / SELL READY / SELL NOW → filtered by Guard
 // - WAIT / AVOID → NA for all fields
 //
 // Direction Guard:
@@ -1527,23 +1627,17 @@ else
 float tradeRRTarget = 2.0
 
 //-----------------------------------------------------------------------------
-// Execution Guard
+// Execution Guard Interface
 //-----------------------------------------------------------------------------
 //
-// Only generate Trade Setup after Decision approval.
+// executionAllowed = Execution Guard output
 //
-// BUY READY
-// BUY NOW
-// SELL READY
-// SELL NOW
+// Guard filters Decision approval before Trade Setup generation.
 //
 //-----------------------------------------------------------------------------
 
 bool executionAllowed =
-     decisionState == "BUY NOW" or
-     decisionState == "BUY READY" or
-     decisionState == "SELL NOW" or
-     decisionState == "SELL READY"
+     executionGate == "ALLOW"
 
 //-----------------------------------------------------------------------------
 // Entry Price (Task 007.3.3)
@@ -1552,7 +1646,7 @@ bool executionAllowed =
 // Now uses engineEntryPrice instead of close
 //
 // Complete integration:
-// Decision Engine → Entry Engine → Trade Setup
+// Decision Engine → Entry Engine → Execution Guard → Trade Setup
 //
 //-----------------------------------------------------------------------------
 
@@ -1643,7 +1737,7 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 var label debugLabel = na
 
-debugText = "CTS Alpha v0.9.5 (Commit 0032.0)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+debugText = "CTS Alpha v0.9.6 (Commit 0033.0)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "Execution Gate : " + executionGate + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
 
 if debugMode
     if na(debugLabel)
