@@ -2,13 +2,55 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.9.6
-// Commit  : 0033.0
-// Stage   : Task 008.1 - Execution Guard Engine
+// Version : v0.9.7
+// Commit  : 0034.1
+// Stage   : Task 008.1.1 - Decision Explain Priority Fix
 //
 // Description:
-// CTS Alpha Trading Framework - Execution Layer
-// Execution Guard Engine
+// CTS Alpha Trading Framework - Decision Explain Priority Fix
+//
+// Changes Commit 0034.1:
+// - Fixed Decision Explain Engine priority order
+//   - Trade Mode Stage Reasons now evaluated BEFORE Breakout Missing
+//   - This fixes PULLBACK + WATCH showing "Waiting Breakout" instead of
+//     "Waiting Momentum Confirmation"
+// - Added Next Action for "Waiting Momentum Confirmation"
+//   - Now displays "Wait Momentum Recovery" instead of "Monitor Breakout"
+// - Updated priority order:
+//   1. Range Market
+//   2. Direction Neutral
+//   3. Trend Too Weak
+//   4. Entry Quality Too Low
+//   5. Trade Mode Stage (WATCH / READY)
+//   6. Breakout Missing (only if NOT in Pullback Mode)
+//   7. Confidence Too Low
+//   8. Structure Direction Conflict
+//
+// Changes Commit 0034.0:
+// - Added decisionStage variable (WAIT / WATCH / READY)
+// - Renamed pullbackMode → pullbackSetup (represents "opportunity exists")
+// - Added pullbackReady (pullbackSetup + Impulse≥40 or Momentum≥60)
+// - Renamed breakoutMode → breakoutReady
+// - Modified Trade Mode Selection V2:
+//   - BREAKOUT: READY
+//   - PULLBACK + Momentum/Impulse: READY
+//   - PULLBACK + No Momentum: WATCH
+//   - NONE: WAIT
+// - decisionApproved now uses decisionStage == "READY"
+// - decisionReason now displays stage-specific reasons:
+//   - PULLBACK + WATCH → "Waiting Momentum Confirmation"
+//   - PULLBACK + READY → "Trend Pullback Setup"
+//   - BREAKOUT + READY → "Breakout Confirmation"
+//   - NONE → "Waiting Setup"
+// - Dashboard added Decision Stage display
+//
+// Changes Commit 0033.1:
+// - Added Trade Mode Engine (Pullback / Breakout / None)
+// - Added Trade Mode Conditions (pullbackMode, breakoutMode)
+// - Modified Decision Engine to use Trade Mode
+// - decisionApproved now uses pullbackMode or breakoutMode
+// - decisionReason now displays Trade Mode specific reasons
+// - Dashboard shows Trade Mode display
 //
 // Changes Commit 0033.0:
 // - Added Execution Guard Engine (Task 008.1)
@@ -1222,24 +1264,110 @@ string executionQualityState =
      engineExecutionScore >= 40 ? "WEAK" :
      "BLOCKED"
 
+//=============================================================================
+// 6.15.6 TRADE MODE ENGINE (Commit 0034.0)
+//=============================================================================
+//
+// Trade Mode Engine
+//
+// Purpose:
+// Separate trade mode detection from Decision Engine
+//
+// Decision Stage:
+// - WAIT  : No setup detected
+// - WATCH : Setup exists, waiting for momentum/impulse confirmation
+// - READY : Setup confirmed, ready for decision
+//
+//-----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
-// 6.16 Decision Engine
+// Trade Mode Engine - Core Variables
 //-----------------------------------------------------------------------------
+
+string tradeMode = "NONE"
+string decisionStage = "WAIT"
+
+//-----------------------------------------------------------------------------
+// Trade Mode Conditions
+//-----------------------------------------------------------------------------
+
+// pullbackSetup = Opportunity exists (trend + direction + structure + grade)
+bool pullbackSetup =
+     engineTrendScore >= 70 and
+     engineDirectionScore >= 70 and
+     engineStructureDirectionScore >= 70 and
+     (pbGrade == "A" or pbGrade == "B")
+
+// pullbackReady = Setup + Momentum/Impulse confirmation
+bool pullbackReady =
+     pullbackSetup and
+     (
+         engineImpulseScore >= 40 or
+         entryMomentumScore >= 60
+     )
+
+// breakoutReady = Breakout score + Volume confirmation
+bool breakoutReady =
+     engineBreakoutScore >= breakoutThreshold and
+     engineVolumeScore >= 50
+
+//=============================================================================
+// 6.16 DECISION ENGINE
+//=============================================================================
 //
 // Decision = Direction + Signal + Confidence + Breakout + Entry
 // Output : BUY NOW / BUY READY / WAIT / SELL READY / SELL NOW / AVOID
 //
-// Entry Engine Integration v0.8.1
+// Modified Commit 0034.0:
+// - Trade Mode Selection V2 (BREAKOUT → READY, PULLBACK + Momentum → READY, PULLBACK → WATCH)
+// - decisionApproved uses decisionStage == "READY"
+// - decisionReason now displays stage-specific reasons
 //
 //-----------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------
+// Trade Mode Selection V2
+//-----------------------------------------------------------------------------
+
+if breakoutReady
+    tradeMode := "BREAKOUT"
+    decisionStage := "READY"
+
+else if pullbackReady
+    tradeMode := "PULLBACK"
+    decisionStage := "READY"
+
+else if pullbackSetup
+    tradeMode := "PULLBACK"
+    decisionStage := "WATCH"
+
+else
+    tradeMode := "NONE"
+    decisionStage := "WAIT"
+
+//-----------------------------------------------------------------------------
+// Decision Approval (Modified Commit 0034.0)
+//-----------------------------------------------------------------------------
+//
+// Now uses decisionStage == "READY" instead of pullbackMode or breakoutMode
+//
+// Effect:
+//   decisionStage == "READY" → Decision can approve
+//   decisionStage == "WATCH" → Wait for momentum confirmation
+//   decisionStage == "WAIT"  → No setup
+//
+//-----------------------------------------------------------------------------
+
+bool decisionApproved =
+     decisionStage == "READY"
+
+//-----------------------------------------------------------------------------
 // Composite Decision Score V2
+//-----------------------------------------------------------------------------
 //
 // Market Quality      40%
 // Opportunity Quality 35%
 // Execution Quality   25%
-
 
 float engineDecisionScore =
      engineMarketScore * 0.40 +
@@ -1295,23 +1423,26 @@ else if engineStructureScore >= 75
 else
     directionReason := "Mixed Signal"
 
+//-----------------------------------------------------------------------------
 // Decision State
+//-----------------------------------------------------------------------------
+
 string decisionState = "WAIT"
 
 // Strong Long
-if marketState != "RANGE" and tradeDirection == "LONG" and engineMarketScore >= 85 and engineOpportunityScore >= 80 and engineExecutionScore >= 80
+if marketState != "RANGE" and tradeDirection == "LONG" and engineMarketScore >= 85 and engineOpportunityScore >= 80 and engineExecutionScore >= 80 and decisionApproved
     decisionState := "BUY NOW"
 
 // Long Setup
-else if marketState != "RANGE" and tradeDirection == "LONG" and engineMarketScore >= 70 and engineOpportunityScore >= 60 and engineExecutionScore >= 60
+else if marketState != "RANGE" and tradeDirection == "LONG" and engineMarketScore >= 70 and engineOpportunityScore >= 60 and engineExecutionScore >= 60 and decisionApproved
     decisionState := "BUY READY"
 
 // Strong Short
-else if marketState != "RANGE" and tradeDirection == "SHORT" and engineMarketScore >= 85 and engineOpportunityScore >= 80 and engineExecutionScore >= 80
+else if marketState != "RANGE" and tradeDirection == "SHORT" and engineMarketScore >= 85 and engineOpportunityScore >= 80 and engineExecutionScore >= 80 and decisionApproved
     decisionState := "SELL NOW"
 
 // Short Setup
-else if marketState != "RANGE" and tradeDirection == "SHORT" and engineMarketScore >= 70 and engineOpportunityScore >= 60 and engineExecutionScore >= 60
+else if marketState != "RANGE" and tradeDirection == "SHORT" and engineMarketScore >= 70 and engineOpportunityScore >= 60 and engineExecutionScore >= 60 and decisionApproved
     decisionState := "SELL READY"
 
 // Avoid Range
@@ -1323,69 +1454,82 @@ else
     decisionState := "WAIT"
 
 //-----------------------------------------------------------------------------
-// 6.16.1 Decision Explain Engine
+// 6.16.1 Decision Explain Engine (Modified Commit 0034.1)
 //-----------------------------------------------------------------------------
 //
 // Purpose:
 //
 // Explain why Decision Engine blocks execution.
 //
-// Priority:
+// Priority (Fixed in 0034.1):
 //
-// Execution Disabled
-// Direction Neutral
-// Trend Weak
-// Entry Poor
-// Breakout Missing
-// Confidence Low
-// Waiting Better Setup
+// 1. Range Market
+// 2. Direction Neutral
+// 3. Trend Too Weak
+// 4. Entry Quality Too Low
+// 5. Trade Mode Stage (WATCH / READY)  ← MOVED UP
+// 6. Breakout Missing (only if NOT in Pullback Mode)
+// 7. Confidence Too Low
+// 8. Structure Direction Conflict
 //
 //-----------------------------------------------------------------------------
 
 string decisionReason = "Ready"
 string decisionDetailReason = ""
 
-// Execution disabled by market state
+// 1. Execution disabled by market state
 
 if decisionState == "AVOID"
     decisionReason := "Range Market"
 
-// Direction not clear
+// 2. Direction not clear
 
 else if tradeDirection == "NEUTRAL"
     decisionReason := "Direction Neutral"
     decisionDetailReason := directionReason
 
-// Trend insufficient
+// 3. Trend insufficient
 
 else if engineTrendScore < 40
     decisionReason := "Trend Too Weak"
 
-// Entry quality insufficient
+// 4. Entry quality insufficient
 
 else if engineEntryScore < 60
     decisionReason := "Entry Quality Too Low"
 
-// Breakout not confirmed
+// 5. TRADE MODE STAGE SPECIFIC REASONS (MOVED UP - Fix Commit 0034.1)
+// These now take priority over Breakout Missing
 
-else if breakoutState == "NONE"
+else if tradeMode == "PULLBACK" and decisionStage == "WATCH"
+    decisionReason := "Waiting Momentum Confirmation"
+
+else if tradeMode == "PULLBACK" and decisionStage == "READY"
+    decisionReason := "Trend Pullback Setup"
+
+else if tradeMode == "BREAKOUT" and decisionStage == "READY"
+    decisionReason := "Breakout Confirmation"
+
+// 6. Breakout not confirmed (only if NOT in Pullback Mode)
+// MOVED DOWN - Now after Trade Mode Stage check
+
+else if tradeMode != "PULLBACK" and breakoutState == "NONE"
     decisionReason := "Waiting Breakout"
 
-// Confidence insufficient
+// 7. Confidence insufficient
 
 else if engineConfidenceScore < 50
     decisionReason := "Confidence Too Low"
 
-// Structure Direction Conflict
-// Added in Commit 0032.0
+// 8. Structure Direction Conflict
 
 else if engineStructureDirectionScore <= 30
     decisionReason := "Structure Direction Conflict"
 
 // Waiting
 
-else if decisionState == "WAIT"
-    decisionReason := "Waiting Better Setup"
+else if decisionState == "WAIT" and tradeMode == "NONE"
+    decisionReason := "Waiting Setup"
 
 // Ready
 
@@ -1441,6 +1585,17 @@ else if decisionReason == "Range Market"
 else if decisionReason == "Structure Direction Conflict"
     nextAction := "Wait Structure Realignment"
 
+// Trade Mode stage specific
+// Added "Waiting Momentum Confirmation" - Fix Commit 0034.1
+else if decisionReason == "Waiting Momentum Confirmation"
+    nextAction := "Wait Momentum Recovery"
+
+else if decisionReason == "Trend Pullback Setup"
+    nextAction := "Ready for Pullback Entry"
+
+else if decisionReason == "Breakout Confirmation"
+    nextAction := "Ready for Breakout Entry"
+
 // Default
 
 else
@@ -1453,15 +1608,6 @@ else
 // Purpose:
 //
 // Define specific trigger conditions for Next Action.
-//
-// Rules:
-//
-// Direction Neutral + Structure Bull → EMA Alignment Confirmation
-// Entry Quality Too Low → Price Return EMA Zone
-// Waiting Breakout → Breakout Score Above Threshold
-// Trend Too Weak → Trend Score Recovery
-// Confidence Too Low → Confidence Recovery
-// Structure Direction Conflict → Structure Realignment
 //
 //-----------------------------------------------------------------------------
 
@@ -1491,8 +1637,17 @@ else if decisionReason == "Range Market"
 else if decisionReason == "Structure Direction Conflict"
     nextTrigger := "Structure Score Aligns with Direction"
 
-else if decisionReason == "Waiting Better Setup"
+else if decisionReason == "Waiting Setup"
     nextTrigger := "Decision Score > 60"
+
+else if decisionReason == "Waiting Momentum Confirmation"
+    nextTrigger := "Impulse Score ≥ 40 OR Momentum Score ≥ 60"
+
+else if decisionReason == "Trend Pullback Setup"
+    nextTrigger := "Price at EMA Zone"
+
+else if decisionReason == "Breakout Confirmation"
+    nextTrigger := "Breakout Confirmed"
 
 else if decisionReason == "Ready"
     nextTrigger := "Monitor Execution"
@@ -1737,7 +1892,8 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 var label debugLabel = na
 
-debugText = "CTS Alpha v0.9.6 (Commit 0033.0)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "Execution Gate : " + executionGate + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+// Modified Dashboard - Added Decision Stage display (Commit 0034.0)
+debugText = "CTS Alpha v0.9.7 (Commit 0034.1)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "Execution Gate : " + executionGate + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
 
 if debugMode
     if na(debugLabel)
