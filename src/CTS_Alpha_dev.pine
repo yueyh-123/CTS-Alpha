@@ -3,7 +3,7 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.7
-// Commit  : 0034.1
+// Commit  : 0034.1 + Patch 1
 // Stage   : Task 008.1.1 - Decision Explain Priority Fix
 //
 // Description:
@@ -92,6 +92,14 @@
 // - Added engineEntryPrice calculation based on EMA20 + EMA60 midpoint
 // - Added price adjustment based on Position Score
 // - Added Entry Price display in Dashboard
+//
+// Patch 1 (2026-08-11):
+// - Added Entry Location Intelligence Engine (6.15.3.1)
+//   - Evaluates current price location relative to entry zone
+//   - Calculates entryDistance, entryDistanceATR
+//   - Generates entryLocationScore (0-100)
+//   - Generates entryLocationState (IDEAL/GOD/AWAY/EXTENDED)
+// - Added debug display for Entry Location
 //
 // Repository:
 // https://github.com/yueyh-123/CTS-Alpha
@@ -1072,6 +1080,79 @@ float engineEntryPrice =
                : entryStructurePrice
 
 //-----------------------------------------------------------------------------
+// 6.15.3.1 Entry Location Intelligence Engine
+//-----------------------------------------------------------------------------
+//
+// Purpose:
+//
+// Evaluate current price location
+// relative to calculated entry zone.
+//
+// Question:
+//
+// "Is current price close enough
+//  to execute?"
+//
+//-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+// Entry Distance
+//-----------------------------------------------------------------------------
+//
+// Distance between current price
+// and engine calculated entry price
+//
+//-----------------------------------------------------------------------------
+
+float entryDistance =
+     math.abs(ctxClose - engineEntryPrice)
+
+
+float entryDistanceATR =
+     safeDivide(entryDistance, ctxATR)
+
+
+//-----------------------------------------------------------------------------
+// Entry Location Score
+//-----------------------------------------------------------------------------
+//
+// Ideal:
+// Close to Entry Zone
+//
+// Bad:
+// Price extended away
+//
+//-----------------------------------------------------------------------------
+
+float entryLocationScore =
+     entryDistanceATR <= 0.5 ? 100.0 :
+     entryDistanceATR <= 1.0 ? 80.0 :
+     entryDistanceATR <= 1.5 ? 50.0 :
+     entryDistanceATR <= 2.0 ? 25.0 :
+     0.0
+
+
+entryLocationScore :=
+     roundScore(
+          clamp(
+               entryLocationScore,
+               0.0,
+               100.0
+          )
+     )
+
+
+//-----------------------------------------------------------------------------
+// Entry Location State
+//-----------------------------------------------------------------------------
+
+string entryLocationState =
+     entryLocationScore >= 85 ? "IDEAL ZONE" :
+     entryLocationScore >= 60 ? "GOOD ZONE" :
+     entryLocationScore >= 30 ? "AWAY FROM ZONE" :
+     "EXTENDED"
+
+//-----------------------------------------------------------------------------
 // 6.15.4 Structure Direction Alignment Engine
 //-----------------------------------------------------------------------------
 //
@@ -1892,8 +1973,8 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 
 var label debugLabel = na
 
-// Modified Dashboard - Added Decision Stage display (Commit 0034.0)
-debugText = "CTS Alpha v0.9.7 (Commit 0034.1)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "Execution Gate : " + executionGate + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+// Modified Dashboard - Added Entry Location Engine debug (Patch 1)
+debugText = "CTS Alpha v0.9.7 (Commit 0034.1 + Patch 1)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "Entry : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Position : " + str.tostring(entryPositionScore) + "\n" + "Momentum : " + str.tostring(entryMomentumScore) + "\n" + "Context : " + str.tostring(entryContextScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) + "\n" + "Entry Location : " + str.tostring(entryLocationScore) + "\n" + "Entry Location State : " + entryLocationState + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "Execution Gate : " + executionGate + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
 
 if debugMode
     if na(debugLabel)
