@@ -2,9 +2,9 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.9.9
-// Commit  : 0036.0 - Patch 4
-// Stage   : Task 008.1 - Execution Guard Architecture
+// Version : v0.9.11
+// Commit  : 0038.0 - Patch 4
+// Stage   : Task 008.3 - Risk Intelligence Gate
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
@@ -15,8 +15,10 @@
 // - Added semantic executionState: APPROVE / CONDITIONAL / WAIT / BLOCK
 // - Exposed independent Decision / Direction / Structure / Risk / Entry gate states
 // - Added gate pass-count diagnostics without changing existing scoring formulas
-// - Preserved existing execution behavior; Entry Location and Risk Intelligence
-//   will be connected as dedicated gates in Tasks 008.2 and 008.3
+// - Promoted Entry Location Intelligence to Execution Gate V1 (Task 008.2)
+// - Promoted Risk Intelligence to Execution Gate V1 (Task 008.3)
+// - MEDIUM RISK is CONDITIONAL; HIGH RISK / AVOID are BLOCKED
+// - Preserved Entry Engine V4 and Risk Engine scoring formulas
 //
 //// Changes Patch 2 (2026-08-11):
 // - Upgraded Entry Engine V3 → V4
@@ -1802,8 +1804,8 @@ else
 // Patch 4 preparation:
 // - Entry Location Intelligence remains inside Entry Engine V4.
 // - Risk Intelligence remains inside Risk Engine.
-// - Dedicated Entry Location / Risk conditions will be promoted to
-//   explicit execution gates in Tasks 008.2 / 008.3.
+// - Entry Location is promoted to an explicit execution gate in Task 008.2.
+// - Risk Intelligence is promoted to an explicit execution gate in Task 008.3.
 //
 // Compatibility:
 // - executionGate remains ALLOW / BLOCK because Trade Setup Engine
@@ -1846,8 +1848,33 @@ bool gateDirectionOK =
 bool gateStructureOK =
      engineStructureDirectionScore >= 50
 
+// Risk Gate V1 (Task 008.3)
+//
+// PASS:
+// - LOW RISK
+//
+// CONDITIONAL:
+// - MEDIUM RISK
+//
+// BLOCK:
+// - HIGH RISK
+// - AVOID
+//
+// Risk Score remains a quality/risk measure.
+// Risk Gate converts that intelligence into execution permission.
+// MEDIUM RISK is diagnostic/conditional only and does not independently
+// grant execution permission in Task 008.3.
+//
+string riskIntelligenceGateState =
+     riskState == "LOW RISK" ? "PASS" :
+     riskState == "MEDIUM RISK" ? "CONDITIONAL" :
+     "BLOCK"
+
 bool gateRiskOK =
-     riskState != "AVOID"
+     riskIntelligenceGateState == "PASS"
+
+bool gateRiskConditional =
+     riskIntelligenceGateState == "CONDITIONAL"
 
 //-----------------------------------------------------------------------------
 // Entry Location Gate V1 (Task 008.2)
@@ -1906,7 +1933,7 @@ string structureGateState =
      gateStructureOK ? "PASS" : "BLOCK"
 
 string riskGateState =
-     gateRiskOK ? "PASS" : "BLOCK"
+     riskIntelligenceGateState
 
 string entryGateState =
      entryLocationGateState
@@ -1919,7 +1946,8 @@ int executionGatePassedCount =
      (gateEntryOK ? 1 : 0)
 
 int executionGateConditionalCount =
-     gateEntryConditional ? 1 : 0
+     (gateEntryConditional ? 1 : 0) +
+     (gateRiskConditional ? 1 : 0)
 
 int executionGateTotalCount = 5
 
@@ -1985,11 +2013,15 @@ else if not gateStructureOK
 else if not gateRiskOK
 
     executionGate := "BLOCK"
-    executionState := "BLOCK"
-    executionBlockReason := "Risk Avoid"
+    executionState := gateRiskConditional ? "WAIT" : "BLOCK"
+    executionBlockReason := gateRiskConditional
+         ? "Risk Conditional"
+         : "Risk Blocked"
 
     executionDetailReason :=
-         riskState
+         riskState +
+         " | Risk Score " +
+         str.tostring(engineRiskScore)
 
 
 else if not gateEntryOK
@@ -2175,7 +2207,7 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 var label debugLabel = na
 
 // Modified Dashboard - Entry Engine V4 display (Patch 2)
-debugText = "CTS Alpha v0.9.10 (Commit 0037.0 - Patch 4)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "\n--- ENTRY ENGINE V4 ---" + "\n" + "Trend (20%) : " + str.tostring(entryTrendScore) + "\n" + "Pullback (20%) : " + str.tostring(entryPullbackScore) + "\n" + "Location (25%) : " + str.tostring(entryLocationScore) + " (" + entryLocationState + ")" + "\n" + "Momentum (15%) : " + str.tostring(entryMomentumScore) + "\n" + "Context (20%) : " + str.tostring(entryContextScore) + "\n" + "Entry Score : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) + "\n" + "Position (Retained) : " + str.tostring(entryPositionScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\n--- EXECUTION GUARD V1 ---" + "\n" + "State : " + executionState + "\n" + "Gate : " + executionGate + "\n" + "Gates : " + executionGateSummary + "\n" + "Conditional : " + str.tostring(executionGateConditionalCount) + "\n" + "Decision Gate : " + decisionGateState + "\n" + "Direction Gate : " + directionGateState + "\n" + "Structure Gate : " + structureGateState + "\n" + "Risk Gate : " + riskGateState + "\n" + "Entry Gate : " + entryGateState + "\n" + "--- ENTRY LOCATION GATE ---" + "\n" + "Location Score : " + str.tostring(entryLocationScore) + "\n" + "Location State : " + entryLocationState + "\n" + "Distance ATR : " + str.tostring(entryDistanceATR) + "\n" + "Entry State : " + entryState + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "Gate Detail : " + executionDetailReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+debugText = "CTS Alpha v0.9.11 (Commit 0038.0 - Patch 4)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "\n--- ENTRY ENGINE V4 ---" + "\n" + "Trend (20%) : " + str.tostring(entryTrendScore) + "\n" + "Pullback (20%) : " + str.tostring(entryPullbackScore) + "\n" + "Location (25%) : " + str.tostring(entryLocationScore) + " (" + entryLocationState + ")" + "\n" + "Momentum (15%) : " + str.tostring(entryMomentumScore) + "\n" + "Context (20%) : " + str.tostring(entryContextScore) + "\n" + "Entry Score : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) + "\n" + "Position (Retained) : " + str.tostring(entryPositionScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\n--- EXECUTION GUARD V1 ---" + "\n" + "State : " + executionState + "\n" + "Gate : " + executionGate + "\n" + "Gates : " + executionGateSummary + "\n" + "Conditional : " + str.tostring(executionGateConditionalCount) + "\n" + "Decision Gate : " + decisionGateState + "\n" + "Direction Gate : " + directionGateState + "\n" + "Structure Gate : " + structureGateState + "\n" + "Risk Gate : " + riskGateState + "\n" + "Entry Gate : " + entryGateState + "\n" + "--- RISK INTELLIGENCE GATE ---" + "\n" + "Risk Score : " + str.tostring(engineRiskScore) + "\n" + "Risk State : " + riskState + "\n" + "Gate State : " + riskIntelligenceGateState + "\n" + "--- ENTRY LOCATION GATE ---" + "\n" + "Location Score : " + str.tostring(entryLocationScore) + "\n" + "Location State : " + entryLocationState + "\n" + "Distance ATR : " + str.tostring(entryDistanceATR) + "\n" + "Entry State : " + entryState + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "Gate Detail : " + executionDetailReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
 
 if debugMode
     if na(debugLabel)
