@@ -2,14 +2,23 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.9.8
-// Commit  : 0035.0 - Patch 2
-// Stage   : Task 008.1.1 - Decision Explain Priority Fix
+// Version : v0.9.9
+// Commit  : 0036.0 - Patch 4
+// Stage   : Task 008.1 - Execution Guard Architecture
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
 //
-// Changes Patch 2 (2026-08-11):
+// Changes Patch 4 (2026-08-11):
+// - Upgraded Execution Guard to V1 architecture (Task 008.1)
+// - Retained legacy executionGate ALLOW/BLOCK interface for Trade Setup compatibility
+// - Added semantic executionState: APPROVE / CONDITIONAL / WAIT / BLOCK
+// - Exposed independent Decision / Direction / Structure / Risk / Entry gate states
+// - Added gate pass-count diagnostics without changing existing scoring formulas
+// - Preserved existing execution behavior; Entry Location and Risk Intelligence
+//   will be connected as dedicated gates in Tasks 008.2 and 008.3
+//
+//// Changes Patch 2 (2026-08-11):
 // - Upgraded Entry Engine V3 → V4
 // - Replaced Position Quality with Entry Location Intelligence
 //   - Old: Position Quality (EMA-based) 20%
@@ -1769,49 +1778,66 @@ else
     nextTrigger := "No Trigger"
 
 //-----------------------------------------------------------------------------
-// 6.16.4 Execution Guard Engine
+// 6.16.4 Execution Guard Engine V1
 //-----------------------------------------------------------------------------
 //
 // Purpose:
 //
-// Execution Guard acts as a gate between Decision Engine
-// and Trade Setup Engine.
+// Execution Guard is the execution-permission layer between
+// Decision Engine and Trade Setup Engine.
 //
-// Architecture:
+// IMPORTANT ARCHITECTURE RULE:
+// - Engines calculate quality.
+// - Decision Engine evaluates opportunity.
+// - Execution Guard evaluates execution permission.
+// - Execution Guard does NOT recalculate market quality.
 //
-// Decision Engine
-//        ↓
-// Execution Guard   ← NEW
-//        ↓
-// Trade Setup
+// Current V1 gates:
+// 1. Decision Gate
+// 2. Direction Gate
+// 3. Structure Gate
+// 4. Risk Gate
+// 5. Entry Gate
 //
-// Core Principle:
-// Default BLOCK, only ALLOW after all conditions pass.
+// Patch 4 preparation:
+// - Entry Location Intelligence remains inside Entry Engine V4.
+// - Risk Intelligence remains inside Risk Engine.
+// - Dedicated Entry Location / Risk conditions will be promoted to
+//   explicit execution gates in Tasks 008.2 / 008.3.
 //
-// 5 Gates:
-// 1. Decision Gate  → Decision State must be BUY/SELL NOW/READY
-// 2. Direction Gate → Direction must be LONG or SHORT (not NEUTRAL)
-// 3. Structure Gate → Structure Direction Score >= 50
-// 4. Risk Gate      → Risk State must not be AVOID
-// 5. Entry Gate     → Entry State must be IDEAL or GOOD
+// Compatibility:
+// - executionGate remains ALLOW / BLOCK because Trade Setup Engine
+//   already consumes executionGate.
+// - executionState is the new semantic execution status.
 //
 //-----------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------
 // Execution Guard State Variables
+//-----------------------------------------------------------------------------
 
+// Legacy binary interface consumed by Trade Setup Engine.
 string executionGate = "BLOCK"
+
+// Semantic execution state.
+// APPROVE      = execution is approved
+// CONDITIONAL  = execution requires additional condition
+// WAIT         = setup exists but confirmation is missing
+// BLOCK        = execution is prohibited
+string executionState = "BLOCK"
+
 string executionBlockReason = "NONE"
 string executionDetailReason = "NONE"
 
 //-----------------------------------------------------------------------------
-// Execution Guard Logic
+// Individual Gate Evaluation
 //-----------------------------------------------------------------------------
-//
-// Core Principle:
-// Default BLOCK
-// Satisfy all conditions → ALLOW
-//
-//-----------------------------------------------------------------------------
+
+bool gateDecisionOK =
+     decisionState == "BUY NOW" or
+     decisionState == "BUY READY" or
+     decisionState == "SELL NOW" or
+     decisionState == "SELL READY"
 
 bool gateDirectionOK =
      tradeDirection == "LONG" or
@@ -1827,46 +1853,115 @@ bool gateEntryOK =
      entryState == "IDEAL ENTRY" or
      entryState == "GOOD ENTRY"
 
-bool gateDecisionOK =
-     decisionState == "BUY NOW" or
-     decisionState == "BUY READY" or
-     decisionState == "SELL NOW" or
-     decisionState == "SELL READY"
+//-----------------------------------------------------------------------------
+// Gate Diagnostics
+//-----------------------------------------------------------------------------
+//
+// These states are diagnostic only in Task 008.1.
+// They do not independently change execution permission.
+//
+//-----------------------------------------------------------------------------
+
+string decisionGateState =
+     gateDecisionOK ? "PASS" : "BLOCK"
+
+string directionGateState =
+     gateDirectionOK ? "PASS" : "BLOCK"
+
+string structureGateState =
+     gateStructureOK ? "PASS" : "BLOCK"
+
+string riskGateState =
+     gateRiskOK ? "PASS" : "BLOCK"
+
+string entryGateState =
+     gateEntryOK ? "PASS" : "BLOCK"
+
+int executionGatePassedCount =
+     (gateDecisionOK ? 1 : 0) +
+     (gateDirectionOK ? 1 : 0) +
+     (gateStructureOK ? 1 : 0) +
+     (gateRiskOK ? 1 : 0) +
+     (gateEntryOK ? 1 : 0)
+
+int executionGateTotalCount = 5
+
+//-----------------------------------------------------------------------------
+// Final Execution Guard
+//-----------------------------------------------------------------------------
+//
+// Core Principle:
+// Default BLOCK.
+// All V1 gates must pass before ALLOW.
+//
+// Priority:
+// 1. Decision
+// 2. Direction
+// 3. Structure
+// 4. Risk
+// 5. Entry
+//
+//-----------------------------------------------------------------------------
+
+executionGate := "BLOCK"
+executionState := "BLOCK"
+executionBlockReason := "NONE"
+executionDetailReason := "NONE"
 
 if not gateDecisionOK
+
     executionGate := "BLOCK"
+
+    executionState :=
+         decisionState == "WAIT"
+         ? "WAIT"
+         : "BLOCK"
+
     executionBlockReason := "Decision Not Approved"
+
     executionDetailReason :=
-         decisionState + 
+         decisionState +
          " | Score " +
          str.tostring(engineDecisionScore)
 
 
 else if not gateDirectionOK
+
     executionGate := "BLOCK"
+    executionState := "BLOCK"
     executionBlockReason := "Direction Neutral"
+
     executionDetailReason :=
          "Direction Score " +
          str.tostring(engineDirectionScore)
 
 
 else if not gateStructureOK
+
     executionGate := "BLOCK"
+    executionState := "BLOCK"
     executionBlockReason := "Structure Conflict"
+
     executionDetailReason :=
          structureDirectionState
 
 
 else if not gateRiskOK
+
     executionGate := "BLOCK"
+    executionState := "BLOCK"
     executionBlockReason := "Risk Avoid"
+
     executionDetailReason :=
          riskState
 
 
 else if not gateEntryOK
+
     executionGate := "BLOCK"
+    executionState := "BLOCK"
     executionBlockReason := "Entry Quality Low"
+
     executionDetailReason :=
          entryState +
          " | Score " +
@@ -1874,11 +1969,22 @@ else if not gateEntryOK
 
 
 else
+
     executionGate := "ALLOW"
+    executionState := "APPROVE"
     executionBlockReason := "All Conditions Passed"
     executionDetailReason := "Ready For Execution"
 
 //-----------------------------------------------------------------------------
+// Execution Guard Summary
+//-----------------------------------------------------------------------------
+
+string executionGateSummary =
+     str.tostring(executionGatePassedCount) +
+     "/" +
+     str.tostring(executionGateTotalCount) +
+     " GATES PASSED"
+
 // 6.17 Trade Setup Engine
 //-----------------------------------------------------------------------------
 //
@@ -2028,7 +2134,7 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 var label debugLabel = na
 
 // Modified Dashboard - Entry Engine V4 display (Patch 2)
-debugText = "CTS Alpha v0.9.8 (Commit 0035.0 - Patch 2)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "\n--- ENTRY ENGINE V4 ---" + "\n" + "Trend (20%) : " + str.tostring(entryTrendScore) + "\n" + "Pullback (20%) : " + str.tostring(entryPullbackScore) + "\n" + "Location (25%) : " + str.tostring(entryLocationScore) + " (" + entryLocationState + ")" + "\n" + "Momentum (15%) : " + str.tostring(entryMomentumScore) + "\n" + "Context (20%) : " + str.tostring(entryContextScore) + "\n" + "Entry Score : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) + "\n" + "Position (Retained) : " + str.tostring(entryPositionScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "Execution Gate : " + executionGate + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "Gate Detail : " + executionDetailReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+debugText = "CTS Alpha v0.9.9 (Commit 0036.0 - Patch 4)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "\n--- ENTRY ENGINE V4 ---" + "\n" + "Trend (20%) : " + str.tostring(entryTrendScore) + "\n" + "Pullback (20%) : " + str.tostring(entryPullbackScore) + "\n" + "Location (25%) : " + str.tostring(entryLocationScore) + " (" + entryLocationState + ")" + "\n" + "Momentum (15%) : " + str.tostring(entryMomentumScore) + "\n" + "Context (20%) : " + str.tostring(entryContextScore) + "\n" + "Entry Score : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) + "\n" + "Position (Retained) : " + str.tostring(entryPositionScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\n--- EXECUTION GUARD V1 ---" + "\n" + "State : " + executionState + "\n" + "Gate : " + executionGate + "\n" + "Gates : " + executionGateSummary + "\n" + "Decision Gate : " + decisionGateState + "\n" + "Direction Gate : " + directionGateState + "\n" + "Structure Gate : " + structureGateState + "\n" + "Risk Gate : " + riskGateState + "\n" + "Entry Gate : " + entryGateState + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "Gate Detail : " + executionDetailReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
 
 if debugMode
     if na(debugLabel)
