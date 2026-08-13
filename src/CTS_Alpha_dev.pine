@@ -2,9 +2,9 @@
 //=============================================================================
 // CTS Alpha
 //-----------------------------------------------------------------------------
-// Version : v0.9.12
-// Commit  : 0039.0 - Patch 4
-// Stage   : Task 008.4 - Final Execution Decision
+// Version : v0.9.13
+// Commit  : 0040.2 - Patch 4
+// Stage   : Task 008.5 - Final Execution Guard + Debug Export
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
@@ -161,6 +161,8 @@ const string GROUP_ADVANCED = "Advanced"
 showEMA = input.bool(true, "Show EMA", group = groupGeneral)
 showBackground = input.bool(true, "Background", group = groupGeneral)
 debugMode = input.bool(false, "Debug Mode", group = groupDebug)
+debugExport = input.bool(false, "Debug Export (Pine Logs)", group = groupDebug)
+debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = groupDebug)
 
 //-----------------------------------------------------------------------------
 // 1.2 EMA Settings
@@ -2272,7 +2274,269 @@ plotshape(healthyBearPullback, title = "Bear Pullback", style = shape.circle, lo
 var label debugLabel = na
 
 // Modified Dashboard - Entry Engine V4 display (Patch 2)
-debugText = "CTS Alpha v0.9.12 (Commit 0039.0 - Patch 4)" + "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") + "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" + "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" + "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" + "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" + "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" + "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" + "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" + "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" + "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" + "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" + "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) + "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) + "\n" + "PB Trend : " + str.tostring(pbTrendScore) + "\n" + "PB Structure : " + str.tostring(pbStructureScore) + "\n" + "PB Context : " + str.tostring(pullbackContextScore) + "\n" + "PB State : " + pbState + "\n" + "PB Grade : " + pbGrade + "\n" + "PB Dominant : " + pbDominant + "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" + "\n" + "Signal : " + str.tostring(engineSignalScore) + "\n" + "Signal State : " + signalState + "\n" + "Signal Direction : " + signalDirection + "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" + "\n" + "\n--- ENTRY ENGINE V4 ---" + "\n" + "Trend (20%) : " + str.tostring(entryTrendScore) + "\n" + "Pullback (20%) : " + str.tostring(entryPullbackScore) + "\n" + "Location (25%) : " + str.tostring(entryLocationScore) + " (" + entryLocationState + ")" + "\n" + "Momentum (15%) : " + str.tostring(entryMomentumScore) + "\n" + "Context (20%) : " + str.tostring(entryContextScore) + "\n" + "Entry Score : " + str.tostring(engineEntryScore) + "\n" + "Entry State : " + entryState + "\n" + "Entry Price : " + str.tostring(engineEntryPrice) + "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) + "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) + "\n" + "Position (Retained) : " + str.tostring(entryPositionScore) + "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) + "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" + "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" + "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" + "\n" + "Decision : " + decisionState + "\n" + "Trade Mode : " + tradeMode + "\n" + "Decision Stage : " + decisionStage + "\n" + "Decision Score : " + str.tostring(engineDecisionScore) + "\n" + "Decision Quality : " + decisionQuality + "\n" + "Reason : " + decisionReason + "\n" + "Detail : " + decisionDetailReason + "\n" + "Next Action : " + nextAction + "\n" + "Trigger : " + nextTrigger + "\n" + "\n--- EXECUTION GUARD V1 ---" + "\n" + "State : " + executionState + "\n" + "Gate : " + executionGate + "\n" + "Gates : " + executionGateSummary + "\n" + "Conditional : " + str.tostring(executionGateConditionalCount) + "\n" + "Decision Gate : " + decisionGateState + "\n" + "Direction Gate : " + directionGateState + "\n" + "Structure Gate : " + structureGateState + "\n" + "Risk Gate : " + riskGateState + "\n" + "Entry Gate : " + entryGateState + "\n" + "--- RISK INTELLIGENCE GATE ---" + "\n" + "Risk Score : " + str.tostring(engineRiskScore) + "\n" + "Risk State : " + riskState + "\n" + "Gate State : " + riskIntelligenceGateState + "\n" + "--- ENTRY LOCATION GATE ---" + "\n" + "Location Score : " + str.tostring(entryLocationScore) + "\n" + "Location State : " + entryLocationState + "\n" + "Distance ATR : " + str.tostring(entryDistanceATR) + "\n" + "Entry State : " + entryState + "\n" + "Gate Reason : " + executionBlockReason + "\n" + "Gate Detail : " + executionDetailReason + "\n" + "\nTrade Setup:" + "\nEntry: " + (na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)) + "\nStop: " + (na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)) + "\nTarget: " + (na(tradeTarget) ? "NA" : str.tostring(tradeTarget)) + "\nRR: " + (na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward))
+
+
+//=============================================================================
+// TASK 008.5 - EXECUTION EXPLAIN / NEXT ACTION V1
+//-----------------------------------------------------------------------------
+// Purpose:
+//   Convert the Final Execution Decision into explicit explanation,
+//   next action, and trigger information.
+//   This layer does NOT modify market, entry, risk, or decision scores.
+//
+// Uses the actual identifiers already defined by Task 008.4:
+//   riskGateState / entryGateState / decisionGateState
+//   directionGateState / structureGateState / nextAction / nextTrigger
+//=============================================================================
+
+string executionExplain = "Execution state pending"
+string executionExplainDetail = ""
+string executionNextAction = "Monitor"
+string executionTrigger = "Re-evaluate on next bar"
+
+if executionState == "APPROVE"
+    executionExplain := "All execution gates approved"
+    executionExplainDetail := "Decision, direction, structure, risk and entry gates passed"
+    executionNextAction := "Execute approved trade setup"
+    executionTrigger := "Execution Gate = ALLOW"
+
+else if executionState == "CONDITIONAL"
+    if riskGateState == "CONDITIONAL"
+        executionExplain := "Risk condition requires confirmation"
+        executionExplainDetail := "Risk state is MEDIUM RISK; additional confirmation is required"
+        executionNextAction := "Wait for risk confirmation"
+        executionTrigger := "Risk Gate changes to PASS"
+    else if entryGateState == "CONDITIONAL"
+        executionExplain := "Entry location requires improvement"
+        executionExplainDetail := "Entry location is acceptable but not execution-grade"
+        executionNextAction := "Wait for better entry location"
+        executionTrigger := "Entry Gate changes to PASS"
+    else
+        executionExplain := "Conditional execution"
+        executionExplainDetail := "One or more non-blocking execution conditions remain"
+        executionNextAction := "Wait for confirmation"
+        executionTrigger := "All conditional gates become PASS"
+
+else if executionState == "WAIT"
+    executionExplain := "Decision is waiting for market confirmation"
+    executionExplainDetail := "Decision Engine has not approved execution"
+    executionNextAction := nextAction
+    executionTrigger := nextTrigger
+
+else
+    //-------------------------------------------------------------------------
+    // BLOCK
+    //-------------------------------------------------------------------------
+    // Execution Guard has already completed gate arbitration.
+    // Task 008.5 must NOT re-arbitrate individual gates.
+    // Always follow the final Execution Guard block reason.
+    //-------------------------------------------------------------------------
+
+    executionExplain := executionBlockReason
+
+    if executionBlockReason == "Risk Blocked"
+        executionExplainDetail := "Risk state is " + riskState
+        executionNextAction := "Wait for risk to improve"
+        executionTrigger := "Risk Gate changes to PASS"
+
+    else if executionBlockReason == "Entry Location Blocked"
+        executionExplainDetail := "Entry state is " + entryState + " and location is outside execution limits"
+        executionNextAction := "Wait for price to return to the entry zone"
+        executionTrigger := "Entry Gate changes to PASS"
+
+    else if executionBlockReason == "Decision Not Approved"
+        executionExplainDetail := "Decision Engine has not approved the trade"
+        executionNextAction := nextAction
+        executionTrigger := nextTrigger
+
+    else if executionBlockReason == "Direction Blocked"
+        executionExplainDetail := "Direction does not meet execution requirements"
+        executionNextAction := "Wait for directional alignment"
+        executionTrigger := "Direction Gate changes to PASS"
+
+    else if executionBlockReason == "Structure Blocked"
+        executionExplainDetail := "Market structure does not meet execution requirements"
+        executionNextAction := "Wait for structure alignment"
+        executionTrigger := "Structure Gate changes to PASS"
+
+    else
+        executionExplainDetail := "Execution Guard has blocked the trade"
+        executionNextAction := "Monitor for gate recovery"
+        executionTrigger := "Execution block reason clears"
+        
+//-----------------------------------------------------------------------------
+// TASK 008.5 DEBUG
+//-----------------------------------------------------------------------------
+// Append Execution Explain directly to the existing execution dashboard
+// output. Do not reference debugText here because it is not defined in the
+// Execution Guard scope.
+
+//-----------------------------------------------------------------------------
+// TASK 008.5 DEBUG
+//-----------------------------------------------------------------------------
+
+string executionDebugText = ""
+
+if debugMode
+    executionDebugText :=
+         "\n--- EXECUTION EXPLAIN ---" +
+         "\nState : " + executionState +
+         "\nReason : " + executionExplain +
+         "\nDetail : " + executionExplainDetail +
+         "\nNext Action : " + executionNextAction +
+         "\nTrigger : " + executionTrigger
+
+//-----------------------------------------------------------------------------
+// 8.3 Debug Dashboard + Task 008.5 Golden Output
+//-----------------------------------------------------------------------------
+//
+// The dashboard keeps the full legacy diagnostic information.
+// The Execution Guard / Explain block at the top is the compact 008.5
+// acceptance output. This separation prevents loss of diagnostic data.
+//
+//-----------------------------------------------------------------------------
+
+string tradeEntryDisplay = na(tradeEntryPrice) ? "NA" : str.tostring(tradeEntryPrice)
+string tradeStopDisplay = na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)
+string tradeTargetDisplay = na(tradeTarget) ? "NA" : str.tostring(tradeTarget)
+string tradeRRDisplay = na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward)
+
+// Exact compact 008.5 output.
+// Do not add internal gate diagnostics to this block.
+string executionGuardFinalText =
+     "--- EXECUTION GUARD V1 ---" +
+     "\n" +
+     "\nState : " + executionState +
+     "\nGates : " + executionGateSummary +
+     "\nDecision Gate : " + decisionGateState +
+     "\nDirection Gate : " + directionGateState +
+     "\nStructure Gate : " + structureGateState +
+     "\nRisk Gate : " + riskGateState +
+     "\nEntry Gate : " + entryGateState +
+     "\nGate Reason : " + executionBlockReason
+
+string executionExplainFinalText =
+     "--- EXECUTION EXPLAIN ---" +
+     "\n" +
+     "\nState : " + executionState +
+     "\nReason : " + executionExplain +
+     "\nDetail : " + executionExplainDetail +
+     "\nNext Action : " + executionNextAction +
+     "\nTrigger : " + executionTrigger
+
+string tradeSetupFinalText =
+     "Trade Setup:" +
+     "\nEntry: " + tradeEntryDisplay +
+     "\nStop: " + tradeStopDisplay +
+     "\nTarget: " + tradeTargetDisplay +
+     "\nRR: " + tradeRRDisplay
+
+// Full legacy diagnostic dashboard.
+// These diagnostics are intentionally retained for investigation.
+string fullDiagnosticText =
+     "CTS Alpha v0.9.13 (Commit 0040.2 - Patch 4)" +
+     "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") +
+     "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" +
+     "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" +
+     "\n" + "Direction : " + str.tostring(engineDirectionScore) + " (" + tradeDirection + ")" +
+     "\n" + "Structure : " + str.tostring(engineStructureScore) + " (" + structureState + ")" +
+     "\n" + "Structure Align : " + str.tostring(engineStructureDirectionScore) + " (" + structureDirectionState + ")" +
+     "\n" + "Confidence : " + str.tostring(engineConfidenceScore) + " (" + confidenceState + ")" +
+     "\n" + "Compression : " + str.tostring(engineCompressionScore) + " (" + compressionState + ")" +
+     "\n" + "Impulse : " + str.tostring(engineImpulseScore) + " (" + impulseState + ")" +
+     "\n" + "Volume : " + str.tostring(engineVolumeScore) + " (" + volumeState + ")" +
+     "\n" + "Pullback : " + str.tostring(enginePullbackScore) + " (" + pbState + ")" +
+     "\n" + "PB Distance ATR : " + str.tostring(emaDistanceATR) +
+     "\n" + "PB Distance Score : " + str.tostring(pbDistanceScore) +
+     "\n" + "PB Trend : " + str.tostring(pbTrendScore) +
+     "\n" + "PB Structure : " + str.tostring(pbStructureScore) +
+     "\n" + "PB Context : " + str.tostring(pullbackContextScore) +
+     "\n" + "PB State : " + pbState +
+     "\n" + "PB Grade : " + pbGrade +
+     "\n" + "PB Dominant : " + pbDominant +
+     "\n" + "PB Efficiency : " + (na(pbTrendEfficiency) ? "NA" : str.tostring(roundScore(pbTrendEfficiency))) + "%" +
+     "\n" + "Signal : " + str.tostring(engineSignalScore) +
+     "\n" + "Signal State : " + signalState +
+     "\n" + "Signal Direction : " + signalDirection +
+     "\n" + "Risk : " + str.tostring(engineRiskScore) + " (" + riskState + ")" +
+     "\n" +
+     "\n--- ENTRY ENGINE V4 ---" +
+     "\n" + "Trend (20%) : " + str.tostring(entryTrendScore) +
+     "\n" + "Pullback (20%) : " + str.tostring(entryPullbackScore) +
+     "\n" + "Location (25%) : " + str.tostring(entryLocationScore) + " (" + entryLocationState + ")" +
+     "\n" + "Momentum (15%) : " + str.tostring(entryMomentumScore) +
+     "\n" + "Context (20%) : " + str.tostring(entryContextScore) +
+     "\n" + "Entry Score : " + str.tostring(engineEntryScore) +
+     "\n" + "Entry State : " + entryState +
+     "\n" + "Entry Price : " + str.tostring(engineEntryPrice) +
+     "\n" + "Entry Adjustment : " + str.tostring(baseAdjustment) +
+     "\n" + "Entry Dist ATR : " + str.tostring(entryDistanceATR) +
+     "\n" + "Position (Retained) : " + str.tostring(entryPositionScore) +
+     "\n" + "Impulse Align : " + str.tostring(entryImpulseScore) +
+     "\n" + "Market Score : " + str.tostring(engineMarketScore) + " (" + marketQualityState + ")" +
+     "\n" + "Opportunity : " + str.tostring(engineOpportunityScore) + " (" + opportunityState + ")" +
+     "\n" + "Execution : " + str.tostring(engineExecutionScore) + " (" + executionQualityState + ")" +
+     "\n" + "Decision : " + decisionState +
+     "\n" + "Trade Mode : " + tradeMode +
+     "\n" + "Decision Stage : " + decisionStage +
+     "\n" + "Decision Score : " + str.tostring(engineDecisionScore) +
+     "\n" + "Decision Quality : " + decisionQuality +
+     "\n" + "Reason : " + decisionReason +
+     "\n" + "Detail : " + decisionDetailReason +
+     "\n" + "Next Action : " + nextAction +
+     "\n" + "Trigger : " + nextTrigger +
+     "\n" +
+     "\n--- EXECUTION GATE DIAGNOSTICS ---" +
+     "\nGate : " + executionGate +
+     "\nConditional : " + str.tostring(executionGateConditionalCount) +
+     "\nRisk Score : " + str.tostring(engineRiskScore) +
+     "\nRisk State : " + riskState +
+     "\nRisk Intelligence Gate : " + riskIntelligenceGateState +
+     "\nLocation Score : " + str.tostring(entryLocationScore) +
+     "\nLocation State : " + entryLocationState +
+     "\nDistance ATR : " + str.tostring(entryDistanceATR) +
+     "\nEntry State : " + entryState +
+     "\nGate Detail : " + executionDetailReason
+
+string debugText =
+     executionGuardFinalText +
+     "\n\n" + executionExplainFinalText +
+     "\n\n" + tradeSetupFinalText +
+     "\n\n--- FULL DEBUG DIAGNOSTICS ---\n" +
+     fullDiagnosticText
+
+//-----------------------------------------------------------------------------
+// 8.4 Debug Export
+//-----------------------------------------------------------------------------
+//
+// Pine Logs is the copy-friendly export channel. The export contains the
+// exact 008.5 output followed by the full legacy diagnostics.
+//
+// Historical chart: emit once on the last historical bar.
+// Realtime: optionally emit once per confirmed bar when Debug Export is on.
+//-----------------------------------------------------------------------------
+
+string debugExportText =
+     "CTS Alpha DEBUG EXPORT" +
+     "\nVersion : v0.9.13" +
+     "\nCommit : 0040.2" +
+     "\nTask : 008.5" +
+     "\n" +
+     "\n" + executionGuardFinalText +
+     "\n\n" + executionExplainFinalText +
+     "\n\n" + tradeSetupFinalText +
+     "\n\n--- FULL DEBUG DIAGNOSTICS ---\n" +
+     fullDiagnosticText
+
+bool debugExportTrigger =
+     debugExport and
+     (
+         barstate.islastconfirmedhistory or
+         (barstate.isrealtime and barstate.islast and (debugExportOnClose ? barstate.isconfirmed : true))
+     )
+
+if debugExportTrigger
+    log.info(debugExportText)
 
 if debugMode
     if na(debugLabel)
