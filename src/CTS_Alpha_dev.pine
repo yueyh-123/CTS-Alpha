@@ -3,8 +3,8 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.13
-// Commit  : 0040.2 - Patch 4
-// Stage   : Task 008.5 - Final Execution Guard + Debug Export
+// Commit  : 0040.3 - Patch 5
+// Stage   : Task 008.5.1 - Gate Semantics + Diagnostics Audit
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
@@ -1953,6 +1953,44 @@ int executionGateConditionalCount =
      (gateEntryConditional ? 1 : 0) +
      (gateRiskConditional ? 1 : 0)
 
+//-----------------------------------------------------------------------------
+// Task 008.5.1 - Gate Semantics Diagnostics
+//-----------------------------------------------------------------------------
+// Structure Gate is explicitly a Structure Alignment Gate in V1.
+// Existing variable names are retained for compatibility.
+// Blocked Gates = hard BLOCK states only.
+// Conditional Gates = non-blocking conditional states only.
+//-----------------------------------------------------------------------------
+
+int executionGateBlockedCount =
+     (not gateDecisionOK ? 1 : 0) +
+     (not gateDirectionOK ? 1 : 0) +
+     (not gateStructureOK ? 1 : 0) +
+     (riskIntelligenceGateState == "BLOCK" ? 1 : 0) +
+     (entryLocationGateState == "BLOCK" ? 1 : 0)
+
+string executionBlockedGates = ""
+if not gateDecisionOK
+    executionBlockedGates := "Decision"
+if not gateDirectionOK
+    executionBlockedGates := executionBlockedGates == "" ? "Direction" : executionBlockedGates + ", Direction"
+if not gateStructureOK
+    executionBlockedGates := executionBlockedGates == "" ? "Structure Alignment" : executionBlockedGates + ", Structure Alignment"
+if riskIntelligenceGateState == "BLOCK"
+    executionBlockedGates := executionBlockedGates == "" ? "Risk" : executionBlockedGates + ", Risk"
+if entryLocationGateState == "BLOCK"
+    executionBlockedGates := executionBlockedGates == "" ? "Entry" : executionBlockedGates + ", Entry"
+if executionBlockedGates == ""
+    executionBlockedGates := "NONE"
+
+string executionConditionalGates = ""
+if gateRiskConditional
+    executionConditionalGates := "Risk"
+if gateEntryConditional
+    executionConditionalGates := executionConditionalGates == "" ? "Entry" : executionConditionalGates + ", Entry"
+if executionConditionalGates == ""
+    executionConditionalGates := "NONE"
+
 int executionGateTotalCount = 5
 
 // Final Execution Decision V1 (Task 008.4)
@@ -2354,10 +2392,10 @@ else
         executionNextAction := "Wait for directional alignment"
         executionTrigger := "Direction Gate changes to PASS"
 
-    else if executionBlockReason == "Structure Blocked"
-        executionExplainDetail := "Market structure does not meet execution requirements"
+    else if executionBlockReason == "Structure Conflict"
+        executionExplainDetail := "Structure direction is not aligned with trade direction"
         executionNextAction := "Wait for structure alignment"
-        executionTrigger := "Structure Gate changes to PASS"
+        executionTrigger := "Structure Alignment Gate changes to PASS"
 
     else
         executionExplainDetail := "Execution Guard has blocked the trade"
@@ -2401,7 +2439,7 @@ string tradeStopDisplay = na(tradeStopLoss) ? "NA" : str.tostring(tradeStopLoss)
 string tradeTargetDisplay = na(tradeTarget) ? "NA" : str.tostring(tradeTarget)
 string tradeRRDisplay = na(tradeRiskReward) ? "NA" : str.tostring(tradeRiskReward)
 
-// Exact compact 008.5 output.
+// Exact compact 008.5.1 acceptance output.
 // Do not add internal gate diagnostics to this block.
 string executionGuardFinalText =
      "--- EXECUTION GUARD V1 ---" +
@@ -2410,7 +2448,7 @@ string executionGuardFinalText =
      "\nGates : " + executionGateSummary +
      "\nDecision Gate : " + decisionGateState +
      "\nDirection Gate : " + directionGateState +
-     "\nStructure Gate : " + structureGateState +
+     "\nStructure Alignment Gate : " + structureGateState +
      "\nRisk Gate : " + riskGateState +
      "\nEntry Gate : " + entryGateState +
      "\nGate Reason : " + executionBlockReason
@@ -2434,7 +2472,7 @@ string tradeSetupFinalText =
 // Full legacy diagnostic dashboard.
 // These diagnostics are intentionally retained for investigation.
 string fullDiagnosticText =
-     "CTS Alpha v0.9.13 (Commit 0040.2 - Patch 4)" +
+     "CTS Alpha v0.9.13 (Commit 0040.3 - Patch 5)" +
      "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") +
      "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" +
      "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" +
@@ -2488,6 +2526,10 @@ string fullDiagnosticText =
      "\n" +
      "\n--- EXECUTION GATE DIAGNOSTICS ---" +
      "\nGate : " + executionGate +
+     "\nPrimary Block : " + executionBlockReason +
+     "\nBlocked Gates : " + executionBlockedGates +
+     "\nBlocked Count : " + str.tostring(executionGateBlockedCount) +
+     "\nConditional Gates : " + executionConditionalGates +
      "\nConditional : " + str.tostring(executionGateConditionalCount) +
      "\nRisk Score : " + str.tostring(engineRiskScore) +
      "\nRisk State : " + riskState +
@@ -2519,8 +2561,8 @@ string debugText =
 string debugExportText =
      "CTS Alpha DEBUG EXPORT" +
      "\nVersion : v0.9.13" +
-     "\nCommit : 0040.2" +
-     "\nTask : 008.5" +
+     "\nCommit : 0040.3" +
+     "\nTask : 008.5.1" +
      "\n" +
      "\n" + executionGuardFinalText +
      "\n\n" + executionExplainFinalText +
