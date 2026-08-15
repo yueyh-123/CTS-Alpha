@@ -3,11 +3,19 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.13
-// Commit  : 0041.0 - Task 009.1
-// Stage   : Task 009.1 - Validation Observation V1
+// Commit  : 0041.2 - Task 009.2.1 (Patch 1)
+// Stage   : Task 009.2.1 - Controlled Stratification + Non-overlapping Validation
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
+//
+// Changes Task 009.2.1 (2026-08-15):
+// - Added Controlled Stratification metadata to Validation Observation V1
+// - Added a non-overlapping validation export using 12-bar anchor spacing
+// - Keeps the original V1 observation export unchanged for exploratory analysis
+// - Controlled groups are observational labels only; they never modify engines
+// - Non-overlapping samples use the same +1/+3/+6/+12 outcome horizons
+// - No Engine, score, threshold, gate, or Trade Setup formula changes
 //
 // Changes Task 009.1 (2026-08-15):
 // - Added Validation Observation V1 as a passive observer layer
@@ -173,6 +181,8 @@ debugExport = input.bool(false, "Debug Export (Pine Logs)", group = groupDebug)
 debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = groupDebug)
 validationExport = input.bool(false, "Validation Observation (Pine Logs)", group = groupDebug)
 validationSampleBars = input.int(500, "Validation Sample Bars", minval = 50, maxval = 2000, step = 50, group = groupDebug)
+validationControlledExport = input.bool(false, "Validation Controlled V2 (Pine Logs)", group = groupDebug)
+validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 1, maxval = 100, step = 1, group = groupDebug)
 
 //-----------------------------------------------------------------------------
 // 1.2 EMA Settings
@@ -2482,7 +2492,7 @@ string tradeSetupFinalText =
 // Full legacy diagnostic dashboard.
 // These diagnostics are intentionally retained for investigation.
 string fullDiagnosticText =
-     "CTS Alpha v0.9.13 (Commit 0041.0 - Task 009.1)" +
+     "CTS Alpha v0.9.13 (Commit 0041.2 - Task 009.2.1 (Patch 1))" +
      "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") +
      "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" +
      "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" +
@@ -2558,7 +2568,7 @@ string debugText =
      fullDiagnosticText
 
 //-----------------------------------------------------------------------------
-// 8.4 Validation Observation V1 (Task 009.1)
+// 8.4 Validation Observation V1 + Controlled Stratification V2 (Task 009.2.1)
 //-----------------------------------------------------------------------------
 // Passive observer only.
 //
@@ -2577,7 +2587,22 @@ string debugText =
 //-----------------------------------------------------------------------------
 
 int validationHorizon = 12
-bool validationReady = validationExport and barstate.isconfirmed and bar_index >= validationHorizon and bar_index >= last_bar_index - validationSampleBars + 1
+bool validationBaseReady =
+     barstate.isconfirmed and
+     bar_index >= validationHorizon and
+     bar_index >= last_bar_index - validationSampleBars + 1
+bool validationReady = validationExport and validationBaseReady
+
+// Controlled / non-overlapping validation:
+// One anchor is selected every N bars. With N = 12 and a 12-bar outcome
+// horizon, adjacent selected samples have non-overlapping forward windows.
+int validationAnchorBarIndex = bar_index - validationHorizon
+int validationBarsFromLatestAnchor = last_bar_index - validationAnchorBarIndex
+bool validationNonOverlapReady =
+     validationControlledExport and
+     validationBaseReady and
+     validationBarsFromLatestAnchor >= 0 and
+     validationBarsFromLatestAnchor % validationNonOverlapBars == 0
 
 float validationAnchorClose = close[validationHorizon]
 float validationATR = ctxATR[validationHorizon]
@@ -2629,21 +2654,21 @@ float validationATRReturn12 =
      ? validationDirectionalReturn12 / (validationATR / validationAnchorClose * 100.0)
      : na
 
-string validationTimestamp = validationReady ? str.format_time(time[validationHorizon], "yyyy-MM-dd HH:mm", "Asia/Shanghai") : "NA"
-string validationMarketState = validationReady ? marketState[validationHorizon] : "NA"
-string validationTrendState = validationReady ? trendState[validationHorizon] : "NA"
-string validationStructureState = validationReady ? structureState[validationHorizon] : "NA"
-string validationStructureAlignState = validationReady ? structureDirectionState[validationHorizon] : "NA"
-string validationRiskState = validationReady ? riskState[validationHorizon] : "NA"
-string validationEntryState = validationReady ? entryState[validationHorizon] : "NA"
-string validationDecisionState = validationReady ? decisionState[validationHorizon] : "NA"
-string validationExecutionState = validationReady ? executionState[validationHorizon] : "NA"
-string validationGateReason = validationReady ? executionBlockReason[validationHorizon] : "NA"
-string validationSignalDirection = validationReady ? signalDirection[validationHorizon] : "NA"
-string validationCompressionState = validationReady ? compressionState[validationHorizon] : "NA"
-string validationImpulseState = validationReady ? impulseState[validationHorizon] : "NA"
-string validationVolumeState = validationReady ? volumeState[validationHorizon] : "NA"
-string validationPullbackState = validationReady ? pbState[validationHorizon] : "NA"
+string validationTimestamp = validationBaseReady ? str.format_time(time[validationHorizon], "yyyy-MM-dd HH:mm", "Asia/Shanghai") : "NA"
+string validationMarketState = validationBaseReady ? marketState[validationHorizon] : "NA"
+string validationTrendState = validationBaseReady ? trendState[validationHorizon] : "NA"
+string validationStructureState = validationBaseReady ? structureState[validationHorizon] : "NA"
+string validationStructureAlignState = validationBaseReady ? structureDirectionState[validationHorizon] : "NA"
+string validationRiskState = validationBaseReady ? riskState[validationHorizon] : "NA"
+string validationEntryState = validationBaseReady ? entryState[validationHorizon] : "NA"
+string validationDecisionState = validationBaseReady ? decisionState[validationHorizon] : "NA"
+string validationExecutionState = validationBaseReady ? executionState[validationHorizon] : "NA"
+string validationGateReason = validationBaseReady ? executionBlockReason[validationHorizon] : "NA"
+string validationSignalDirection = validationBaseReady ? signalDirection[validationHorizon] : "NA"
+string validationCompressionState = validationBaseReady ? compressionState[validationHorizon] : "NA"
+string validationImpulseState = validationBaseReady ? impulseState[validationHorizon] : "NA"
+string validationVolumeState = validationBaseReady ? volumeState[validationHorizon] : "NA"
+string validationPullbackState = validationBaseReady ? pbState[validationHorizon] : "NA"
 
 string validationObservationText =
      "CTS_VALIDATION_V1" +
@@ -2686,6 +2711,83 @@ string validationObservationText =
 
 if validationReady
     log.info(validationObservationText)
+
+//-----------------------------------------------------------------------------
+// Controlled Stratification V2
+//-----------------------------------------------------------------------------
+//
+// Controlled groups:
+// - structure_control = Market State + Direction
+//   Used to compare ALIGNED / MIXED / CONFLICT without mixing market regimes.
+// - risk_control = Market State
+//   Used to compare Risk states within the same market regime.
+// - entry_control = Market State
+//   Used to compare Entry states within the same market regime.
+// - decision_control = Market State + Direction
+//   Used to compare Decision states without mixing direction or regime.
+//
+// The labels are metadata only. They never feed back into any Engine.
+//
+// Non-overlap rule:
+// - The anchor spacing defaults to 12 bars.
+// - The outcome horizon is also 12 bars.
+// - Therefore adjacent selected anchors do not share the +1/+3/+6/+12 window.
+//
+// This is deliberately separate from V1 so the 499-sample exploratory dataset
+// can be compared against the smaller independent-sample dataset.
+//-----------------------------------------------------------------------------
+
+// Controlled labels describe the ANCHOR state, so they must depend on
+// validationBaseReady rather than validationReady (which also requires the
+// V1 export switch). This keeps V2 independent from the V1 logging toggle.
+string validationStructureControl = validationBaseReady ? validationMarketState + "|" + validationDirection : "NA"
+string validationRiskControl = validationBaseReady ? validationMarketState : "NA"
+string validationEntryControl = validationBaseReady ? validationMarketState : "NA"
+string validationDecisionControl = validationBaseReady ? validationMarketState + "|" + validationDirection : "NA"
+
+string validationControlledText =
+     "CTS_VALIDATION_V2" +
+     ",sample_type=NON_OVERLAP" +
+     ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
+     ",horizon=" + str.tostring(validationHorizon) +
+     ",anchor=" + validationTimestamp +
+     ",market=" + validationMarketState +
+     ",trend=" + validationTrendState +
+     ",direction=" + validationDirection +
+     ",structure=" + validationStructureState +
+     ",structure_align=" + validationStructureAlignState +
+     ",structure_control=" + validationStructureControl +
+     ",risk=" + validationRiskState +
+     ",risk_control=" + validationRiskControl +
+     ",entry=" + validationEntryState +
+     ",entry_control=" + validationEntryControl +
+     ",decision=" + validationDecisionState +
+     ",decision_control=" + validationDecisionControl +
+     ",execution=" + validationExecutionState +
+     ",gate_reason=" + validationGateReason +
+     ",confidence=" + str.tostring(engineConfidenceScore[validationHorizon]) +
+     ",entry_score=" + str.tostring(engineEntryScore[validationHorizon]) +
+     ",location_score=" + str.tostring(entryLocationScore[validationHorizon]) +
+     ",distance_atr=" + str.tostring(entryDistanceATR[validationHorizon]) +
+     ",risk_score=" + str.tostring(engineRiskScore[validationHorizon]) +
+     ",gate_passed=" + str.tostring(executionGatePassedCount[validationHorizon]) +
+     ",blocked_count=" + str.tostring(executionGateBlockedCount[validationHorizon]) +
+     ",anchor_close=" + str.tostring(validationAnchorClose) +
+     ",fwd1_pct=" + str.tostring(validationReturn1) +
+     ",fwd3_pct=" + str.tostring(validationReturn3) +
+     ",fwd6_pct=" + str.tostring(validationReturn6) +
+     ",fwd12_pct=" + str.tostring(validationReturn12) +
+     ",dir_fwd1_pct=" + str.tostring(validationDirectionalReturn1) +
+     ",dir_fwd3_pct=" + str.tostring(validationDirectionalReturn3) +
+     ",dir_fwd6_pct=" + str.tostring(validationDirectionalReturn6) +
+     ",dir_fwd12_pct=" + str.tostring(validationDirectionalReturn12) +
+     ",dir_fwd1_atr=" + str.tostring(validationATRReturn1) +
+     ",dir_fwd3_atr=" + str.tostring(validationATRReturn3) +
+     ",dir_fwd6_atr=" + str.tostring(validationATRReturn6) +
+     ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
+
+if validationNonOverlapReady
+    log.info(validationControlledText)
 
 //-----------------------------------------------------------------------------
 // 8.5 Debug Export
