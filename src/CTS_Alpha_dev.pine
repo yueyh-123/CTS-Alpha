@@ -3,11 +3,19 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.13
-// Commit  : 0040.3 - Patch 5
-// Stage   : Task 008.5.1 - Gate Semantics + Diagnostics Audit
+// Commit  : 0041.0 - Task 009.1
+// Stage   : Task 009.1 - Validation Observation V1
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
+//
+// Changes Task 009.1 (2026-08-15):
+// - Added Validation Observation V1 as a passive observer layer
+// - Records the CTS decision/execution state at the anchor bar
+// - Resolves +1/+3/+6/+12 bar forward outcomes only after those bars exist
+// - Uses historical series references only; validation never modifies execution logic
+// - Adds optional CSV-like Pine Log export for historical validation
+// - No Engine, score, threshold, gate, or Trade Setup formula changes
 //
 // Changes Patch 4 (2026-08-11):
 // - Upgraded Execution Guard to V1 architecture (Task 008.1)
@@ -163,6 +171,8 @@ showBackground = input.bool(true, "Background", group = groupGeneral)
 debugMode = input.bool(false, "Debug Mode", group = groupDebug)
 debugExport = input.bool(false, "Debug Export (Pine Logs)", group = groupDebug)
 debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = groupDebug)
+validationExport = input.bool(false, "Validation Observation (Pine Logs)", group = groupDebug)
+validationSampleBars = input.int(500, "Validation Sample Bars", minval = 50, maxval = 2000, step = 50, group = groupDebug)
 
 //-----------------------------------------------------------------------------
 // 1.2 EMA Settings
@@ -2472,7 +2482,7 @@ string tradeSetupFinalText =
 // Full legacy diagnostic dashboard.
 // These diagnostics are intentionally retained for investigation.
 string fullDiagnosticText =
-     "CTS Alpha v0.9.13 (Commit 0040.3 - Patch 5)" +
+     "CTS Alpha v0.9.13 (Commit 0041.0 - Task 009.1)" +
      "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") +
      "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" +
      "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" +
@@ -2548,8 +2558,139 @@ string debugText =
      fullDiagnosticText
 
 //-----------------------------------------------------------------------------
-// 8.4 Debug Export
+// 8.4 Validation Observation V1 (Task 009.1)
 //-----------------------------------------------------------------------------
+// Passive observer only.
+//
+// IMPORTANT:
+// - This block does NOT feed back into any Engine, Decision, Gate, or Trade Setup.
+// - The anchor state is taken from [12] bars ago.
+// - At the current bar, +1/+3/+6/+12 outcomes are already observable as
+//   close[11], close[9], close[6], and close respectively.
+// - Directional Return is positive when subsequent price movement agrees with
+//   the anchor Direction (LONG up / SHORT down).
+// - ATR-normalized outcome uses ctxATR[12] from the anchor bar.
+// - Export is opt-in because one log line is emitted per eligible confirmed bar.
+//
+// This is observation, not backtest execution. No future value is used by the
+// trading decision at the anchor bar.
+//-----------------------------------------------------------------------------
+
+int validationHorizon = 12
+bool validationReady = validationExport and barstate.isconfirmed and bar_index >= validationHorizon and bar_index >= last_bar_index - validationSampleBars + 1
+
+float validationAnchorClose = close[validationHorizon]
+float validationATR = ctxATR[validationHorizon]
+string validationDirection = tradeDirection[validationHorizon]
+
+float validationClose1 = close[validationHorizon - 1]
+float validationClose3 = close[validationHorizon - 3]
+float validationClose6 = close[validationHorizon - 6]
+float validationClose12 = close
+
+float validationReturn1 = not na(validationAnchorClose) ? (validationClose1 - validationAnchorClose) / validationAnchorClose * 100.0 : na
+float validationReturn3 = not na(validationAnchorClose) ? (validationClose3 - validationAnchorClose) / validationAnchorClose * 100.0 : na
+float validationReturn6 = not na(validationAnchorClose) ? (validationClose6 - validationAnchorClose) / validationAnchorClose * 100.0 : na
+float validationReturn12 = not na(validationAnchorClose) ? (validationClose12 - validationAnchorClose) / validationAnchorClose * 100.0 : na
+
+float validationDirectionalReturn1 =
+     validationDirection == "LONG" ? validationReturn1 :
+     validationDirection == "SHORT" ? -validationReturn1 : na
+
+float validationDirectionalReturn3 =
+     validationDirection == "LONG" ? validationReturn3 :
+     validationDirection == "SHORT" ? -validationReturn3 : na
+
+float validationDirectionalReturn6 =
+     validationDirection == "LONG" ? validationReturn6 :
+     validationDirection == "SHORT" ? -validationReturn6 : na
+
+float validationDirectionalReturn12 =
+     validationDirection == "LONG" ? validationReturn12 :
+     validationDirection == "SHORT" ? -validationReturn12 : na
+
+float validationATRReturn1 =
+     not na(validationDirectionalReturn1) and validationATR > 0
+     ? validationDirectionalReturn1 / (validationATR / validationAnchorClose * 100.0)
+     : na
+
+float validationATRReturn3 =
+     not na(validationDirectionalReturn3) and validationATR > 0
+     ? validationDirectionalReturn3 / (validationATR / validationAnchorClose * 100.0)
+     : na
+
+float validationATRReturn6 =
+     not na(validationDirectionalReturn6) and validationATR > 0
+     ? validationDirectionalReturn6 / (validationATR / validationAnchorClose * 100.0)
+     : na
+
+float validationATRReturn12 =
+     not na(validationDirectionalReturn12) and validationATR > 0
+     ? validationDirectionalReturn12 / (validationATR / validationAnchorClose * 100.0)
+     : na
+
+string validationTimestamp = validationReady ? str.format_time(time[validationHorizon], "yyyy-MM-dd HH:mm", "Asia/Shanghai") : "NA"
+string validationMarketState = validationReady ? marketState[validationHorizon] : "NA"
+string validationTrendState = validationReady ? trendState[validationHorizon] : "NA"
+string validationStructureState = validationReady ? structureState[validationHorizon] : "NA"
+string validationStructureAlignState = validationReady ? structureDirectionState[validationHorizon] : "NA"
+string validationRiskState = validationReady ? riskState[validationHorizon] : "NA"
+string validationEntryState = validationReady ? entryState[validationHorizon] : "NA"
+string validationDecisionState = validationReady ? decisionState[validationHorizon] : "NA"
+string validationExecutionState = validationReady ? executionState[validationHorizon] : "NA"
+string validationGateReason = validationReady ? executionBlockReason[validationHorizon] : "NA"
+string validationSignalDirection = validationReady ? signalDirection[validationHorizon] : "NA"
+string validationCompressionState = validationReady ? compressionState[validationHorizon] : "NA"
+string validationImpulseState = validationReady ? impulseState[validationHorizon] : "NA"
+string validationVolumeState = validationReady ? volumeState[validationHorizon] : "NA"
+string validationPullbackState = validationReady ? pbState[validationHorizon] : "NA"
+
+string validationObservationText =
+     "CTS_VALIDATION_V1" +
+     ",anchor=" + validationTimestamp +
+     ",market=" + validationMarketState +
+     ",trend=" + validationTrendState +
+     ",direction=" + validationDirection +
+     ",structure=" + validationStructureState +
+     ",structure_align=" + validationStructureAlignState +
+     ",confidence=" + str.tostring(engineConfidenceScore[validationHorizon]) +
+     ",compression=" + validationCompressionState +
+     ",impulse=" + validationImpulseState +
+     ",volume=" + validationVolumeState +
+     ",pullback=" + validationPullbackState +
+     ",signal=" + validationSignalDirection +
+     ",risk=" + validationRiskState +
+     ",entry_score=" + str.tostring(engineEntryScore[validationHorizon]) +
+     ",entry=" + validationEntryState +
+     ",location_score=" + str.tostring(entryLocationScore[validationHorizon]) +
+     ",distance_atr=" + str.tostring(entryDistanceATR[validationHorizon]) +
+     ",decision=" + validationDecisionState +
+     ",execution=" + validationExecutionState +
+     ",gate_reason=" + validationGateReason +
+     ",gate_passed=" + str.tostring(executionGatePassedCount[validationHorizon]) +
+     ",blocked_count=" + str.tostring(executionGateBlockedCount[validationHorizon]) +
+     ",risk_score=" + str.tostring(engineRiskScore[validationHorizon]) +
+     ",anchor_close=" + str.tostring(validationAnchorClose) +
+     ",fwd1_pct=" + str.tostring(validationReturn1) +
+     ",fwd3_pct=" + str.tostring(validationReturn3) +
+     ",fwd6_pct=" + str.tostring(validationReturn6) +
+     ",fwd12_pct=" + str.tostring(validationReturn12) +
+     ",dir_fwd1_pct=" + str.tostring(validationDirectionalReturn1) +
+     ",dir_fwd3_pct=" + str.tostring(validationDirectionalReturn3) +
+     ",dir_fwd6_pct=" + str.tostring(validationDirectionalReturn6) +
+     ",dir_fwd12_pct=" + str.tostring(validationDirectionalReturn12) +
+     ",dir_fwd1_atr=" + str.tostring(validationATRReturn1) +
+     ",dir_fwd3_atr=" + str.tostring(validationATRReturn3) +
+     ",dir_fwd6_atr=" + str.tostring(validationATRReturn6) +
+     ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
+
+if validationReady
+    log.info(validationObservationText)
+
+//-----------------------------------------------------------------------------
+// 8.5 Debug Export
+//-----------------------------------------------------------------------------
+
 //
 // Pine Logs is the copy-friendly export channel. The export contains the
 // exact 008.5 output followed by the full legacy diagnostics.
