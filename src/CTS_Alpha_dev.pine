@@ -3,8 +3,8 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.13
-// Commit  : 0041.2 - Task 009.2.1 (Patch 1)
-// Stage   : Task 009.2.1 - Controlled Stratification + Non-overlapping Validation
+// Commit  : 0041.4 - Task 009.2.2
+// Stage   : Task 009.2.2 - Gate Outcome Stratification
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
@@ -15,6 +15,8 @@
 // - Keeps the original V1 observation export unchanged for exploratory analysis
 // - Controlled groups are observational labels only; they never modify engines
 // - Non-overlapping samples use the same +1/+3/+6/+12 outcome horizons
+// - Added Gate Outcome Stratification export for controlled validation
+// - Gate labels reuse the existing Execution Guard V1 states; no gate logic is duplicated
 // - No Engine, score, threshold, gate, or Trade Setup formula changes
 //
 // Changes Task 009.1 (2026-08-15):
@@ -182,6 +184,7 @@ debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = group
 validationExport = input.bool(false, "Validation Observation (Pine Logs)", group = groupDebug)
 validationSampleBars = input.int(500, "Validation Sample Bars", minval = 50, maxval = 2000, step = 50, group = groupDebug)
 validationControlledExport = input.bool(false, "Validation Controlled V2 (Pine Logs)", group = groupDebug)
+validationGateExport = input.bool(false, "Validation Gate Stratification (Pine Logs)", group = groupDebug)
 validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
 
 //-----------------------------------------------------------------------------
@@ -2492,7 +2495,7 @@ string tradeSetupFinalText =
 // Full legacy diagnostic dashboard.
 // These diagnostics are intentionally retained for investigation.
 string fullDiagnosticText =
-     "CTS Alpha v0.9.13 (Commit 0041.2 - Task 009.2.1 (Patch 1))" +
+     "CTS Alpha v0.9.13 (Commit 0041.4 - Task 009.2.2)" +
      "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") +
      "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" +
      "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" +
@@ -2599,7 +2602,7 @@ bool validationReady = validationExport and validationBaseReady
 int validationAnchorBarIndex = bar_index - validationHorizon
 int validationBarsFromLatestAnchor = last_bar_index - validationAnchorBarIndex
 bool validationNonOverlapReady =
-     validationControlledExport and
+     (validationControlledExport or validationGateExport) and
      validationBaseReady and
      validationBarsFromLatestAnchor >= 0 and
      validationBarsFromLatestAnchor % validationNonOverlapBars == 0
@@ -2745,6 +2748,49 @@ string validationRiskControl = validationBaseReady ? validationMarketState : "NA
 string validationEntryControl = validationBaseReady ? validationMarketState : "NA"
 string validationDecisionControl = validationBaseReady ? validationMarketState + "|" + validationDirection : "NA"
 
+// Gate Outcome Stratification (Task 009.2.2)
+// Reuses the existing Execution Guard V1 outputs at the anchor bar.
+// No gate is recalculated here.
+string validationDecisionGate = validationBaseReady ? decisionGateState[validationHorizon] : "NA"
+string validationDirectionGate = validationBaseReady ? directionGateState[validationHorizon] : "NA"
+string validationStructureGate = validationBaseReady ? structureGateState[validationHorizon] : "NA"
+string validationRiskGate = validationBaseReady ? riskGateState[validationHorizon] : "NA"
+string validationEntryGate = validationBaseReady ? entryGateState[validationHorizon] : "NA"
+string validationExecutionBlockedGates = validationBaseReady ? executionBlockedGates[validationHorizon] : "NA"
+string validationExecutionConditionalGates = validationBaseReady ? executionConditionalGates[validationHorizon] : "NA"
+int validationBlockedCount = validationBaseReady ? executionGateBlockedCount[validationHorizon] : 0
+int validationConditionalCount = validationBaseReady ? executionGateConditionalCount[validationHorizon] : 0
+
+string validationGateControl = "NA"
+if validationBaseReady
+    if validationExecutionState == "APPROVE"
+        validationGateControl := "ALL_PASS"
+    else if validationExecutionState == "WAIT"
+        validationGateControl := "DECISION_WAIT"
+    else if validationBlockedCount > 1
+        validationGateControl := "MULTI_BLOCK"
+    else if validationDecisionGate == "BLOCK"
+        validationGateControl := "DECISION_BLOCK"
+    else if validationDirectionGate == "BLOCK"
+        validationGateControl := "DIRECTION_BLOCK"
+    else if validationStructureGate == "BLOCK"
+        validationGateControl := "STRUCTURE_BLOCK"
+    else if validationRiskGate == "BLOCK"
+        validationGateControl := "RISK_BLOCK"
+    else if validationEntryGate == "BLOCK"
+        validationGateControl := "ENTRY_BLOCK"
+    else if validationExecutionState == "CONDITIONAL"
+        validationGateControl := validationConditionalCount > 1 ? "MULTI_CONDITIONAL" : validationRiskGate == "CONDITIONAL" ? "RISK_CONDITIONAL" : "ENTRY_CONDITIONAL"
+    else
+        validationGateControl := "OTHER_BLOCK"
+
+string validationGateMask =
+     "D=" + validationDecisionGate +
+     "|DIR=" + validationDirectionGate +
+     "|STR=" + validationStructureGate +
+     "|RISK=" + validationRiskGate +
+     "|ENTRY=" + validationEntryGate
+
 string validationControlledText =
      "CTS_VALIDATION_V2" +
      ",sample_type=NON_OVERLAP" +
@@ -2786,10 +2832,46 @@ string validationControlledText =
      ",dir_fwd6_atr=" + str.tostring(validationATRReturn6) +
      ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
 
-if validationNonOverlapReady
+if validationControlledExport and validationNonOverlapReady
     log.info(validationControlledText)
 
 //-----------------------------------------------------------------------------
+// Gate Outcome Stratification Export V2
+// Same non-overlapping anchor/outcome sample with explicit Execution Guard states.
+// Passive observer only; no feedback into any engine or gate.
+string validationGateText =
+     "CTS_VALIDATION_GATE_V2" +
+     ",sample_type=NON_OVERLAP" +
+     ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
+     ",horizon=" + str.tostring(validationHorizon) +
+     ",anchor=" + validationTimestamp +
+     ",market=" + validationMarketState +
+     ",direction=" + validationDirection +
+     ",structure_align=" + validationStructureAlignState +
+     ",execution=" + validationExecutionState +
+     ",gate_control=" + validationGateControl +
+     ",gate_mask=" + validationGateMask +
+     ",blocked_gates=" + validationExecutionBlockedGates +
+     ",conditional_gates=" + validationExecutionConditionalGates +
+     ",blocked_count=" + str.tostring(validationBlockedCount) +
+     ",conditional_count=" + str.tostring(validationConditionalCount) +
+     ",gate_passed=" + str.tostring(executionGatePassedCount[validationHorizon]) +
+     ",decision=" + validationDecisionState +
+     ",risk=" + validationRiskState +
+     ",entry=" + validationEntryState +
+     ",anchor_close=" + str.tostring(validationAnchorClose) +
+     ",dir_fwd1_pct=" + str.tostring(validationDirectionalReturn1) +
+     ",dir_fwd3_pct=" + str.tostring(validationDirectionalReturn3) +
+     ",dir_fwd6_pct=" + str.tostring(validationDirectionalReturn6) +
+     ",dir_fwd12_pct=" + str.tostring(validationDirectionalReturn12) +
+     ",dir_fwd1_atr=" + str.tostring(validationATRReturn1) +
+     ",dir_fwd3_atr=" + str.tostring(validationATRReturn3) +
+     ",dir_fwd6_atr=" + str.tostring(validationATRReturn6) +
+     ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
+
+if validationGateExport and validationNonOverlapReady
+    log.info(validationGateText)
+
 // 8.5 Debug Export
 //-----------------------------------------------------------------------------
 
@@ -2804,8 +2886,8 @@ if validationNonOverlapReady
 string debugExportText =
      "CTS Alpha DEBUG EXPORT" +
      "\nVersion : v0.9.13" +
-     "\nCommit : 0041.2" +
-     "\nTask : 009.2.1" +
+     "\nCommit : 0041.4" +
+     "\nTask : 009.2.2" +
      "\n" +
      "\n" + executionGuardFinalText +
      "\n\n" + executionExplainFinalText +
