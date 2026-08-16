@@ -1,0 +1,2 @@
+Finding 009.2.1-S01：Structure Alignment 在 Exploratory V1 与 Non-overlapping Controlled V2 两个验证框架中均表现出一致方向的区分能力。在当前 166-sample 数据集中，控制 Market State = RANGE、Direction = SHORT 后，ALIGNED（N=47）的未来 12-bar directional return 均值为 +0.757 ATR，而 CONFLICT（N=30）为 −0.516 ATR，均值差 +1.273 ATR；四个观察 Horizon 中该差异方向保持一致。该结果目前被定义为 Strong Candidate Feature，但不足以支持修改 Structure Engine，需继续进行跨时间、跨市场状态及 Out-of-Sample / Walk-forward 验证。
+

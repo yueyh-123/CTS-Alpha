@@ -149,7 +149,7 @@
 //   - Evaluates current price location relative to entry zone
 //   - Calculates entryDistance, entryDistanceATR
 //   - Generates entryLocationScore (0-100)
-//   - Generates entryLocationState (IDEAL/GOD/AWAY/EXTENDED)
+//   - Generates entryLocationState (IDEAL ZONE / GOOD ZONE / AWAY FROM ZONE / EXTENDED)
 // - Added debug display for Entry Location
 //
 // Repository:
@@ -182,7 +182,7 @@ debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = group
 validationExport = input.bool(false, "Validation Observation (Pine Logs)", group = groupDebug)
 validationSampleBars = input.int(500, "Validation Sample Bars", minval = 50, maxval = 2000, step = 50, group = groupDebug)
 validationControlledExport = input.bool(false, "Validation Controlled V2 (Pine Logs)", group = groupDebug)
-validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 1, maxval = 100, step = 1, group = groupDebug)
+validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
 
 //-----------------------------------------------------------------------------
 // 1.2 EMA Settings
@@ -2804,8 +2804,8 @@ if validationNonOverlapReady
 string debugExportText =
      "CTS Alpha DEBUG EXPORT" +
      "\nVersion : v0.9.13" +
-     "\nCommit : 0040.3" +
-     "\nTask : 008.5.1" +
+     "\nCommit : 0041.2" +
+     "\nTask : 009.2.1" +
      "\n" +
      "\n" + executionGuardFinalText +
      "\n\n" + executionExplainFinalText +
