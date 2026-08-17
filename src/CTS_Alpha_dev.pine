@@ -3,8 +3,8 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.13
-// Commit  : 0041.4 - Task 009.2.2
-// Stage   : Task 009.2.2 - Gate Outcome Stratification
+// Commit  : 0041.5-FIX1 - Task 009.2.3
+// Stage   : Task 009.2.3 - Independent Time-Window Validation
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
@@ -182,9 +182,13 @@ debugMode = input.bool(false, "Debug Mode", group = groupDebug)
 debugExport = input.bool(false, "Debug Export (Pine Logs)", group = groupDebug)
 debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = groupDebug)
 validationExport = input.bool(false, "Validation Observation (Pine Logs)", group = groupDebug)
-validationSampleBars = input.int(500, "Validation Sample Bars", minval = 50, maxval = 2000, step = 50, group = groupDebug)
 validationControlledExport = input.bool(false, "Validation Controlled V2 (Pine Logs)", group = groupDebug)
 validationGateExport = input.bool(false, "Validation Gate Stratification (Pine Logs)", group = groupDebug)
+validationDatasetId = input.string("A", "Validation Dataset ID", options = ["A", "B"], group = groupDebug)
+const int validationStartDefault = 1757952000000
+const int validationEndDefault = 1786550340000
+validationStartTime = input.time(validationStartDefault, "Validation Start Time", group = groupDebug)
+validationEndTime = input.time(validationEndDefault, "Validation End Time", group = groupDebug)
 validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
 
 //-----------------------------------------------------------------------------
@@ -2590,22 +2594,41 @@ string debugText =
 //-----------------------------------------------------------------------------
 
 int validationHorizon = 12
+
+// Dataset selection is controlled by the anchor timestamp, not by the
+// TradingView viewport. The visible chart range therefore cannot silently
+// change the validation dataset.
+int validationAnchorBarIndex = bar_index - validationHorizon
+int validationAnchorTime = time[validationHorizon]
+
+// Capture the first chart bar inside the requested window so non-overlap
+// spacing is anchored to Dataset B/A itself rather than last_bar_index.
+var int validationDatasetStartBarIndex = na
+if na(validationDatasetStartBarIndex) and time >= validationStartTime
+    validationDatasetStartBarIndex := bar_index
+
+bool validationDateWindowReady =
+     not na(validationAnchorTime) and
+     validationAnchorTime >= validationStartTime and
+     validationAnchorTime <= validationEndTime
+
 bool validationBaseReady =
      barstate.isconfirmed and
      bar_index >= validationHorizon and
-     bar_index >= last_bar_index - validationSampleBars + 1
+     validationDateWindowReady
+
 bool validationReady = validationExport and validationBaseReady
 
 // Controlled / non-overlapping validation:
 // One anchor is selected every N bars. With N = 12 and a 12-bar outcome
-// horizon, adjacent selected samples have non-overlapping forward windows.
-int validationAnchorBarIndex = bar_index - validationHorizon
-int validationBarsFromLatestAnchor = last_bar_index - validationAnchorBarIndex
+// horizon, adjacent selected anchors have non-overlapping forward windows.
+int validationBarsFromDatasetStart =
+     not na(validationDatasetStartBarIndex) ? validationAnchorBarIndex - validationDatasetStartBarIndex : -1
 bool validationNonOverlapReady =
      (validationControlledExport or validationGateExport) and
      validationBaseReady and
-     validationBarsFromLatestAnchor >= 0 and
-     validationBarsFromLatestAnchor % validationNonOverlapBars == 0
+     validationBarsFromDatasetStart >= 0 and
+     validationBarsFromDatasetStart % validationNonOverlapBars == 0
 
 float validationAnchorClose = close[validationHorizon]
 float validationATR = ctxATR[validationHorizon]
@@ -2675,6 +2698,9 @@ string validationPullbackState = validationBaseReady ? pbState[validationHorizon
 
 string validationObservationText =
      "CTS_VALIDATION_V1" +
+     ",dataset=" + validationDatasetId +
+     ",window_start=" + str.format_time(validationStartTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",window_end=" + str.format_time(validationEndTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
      ",anchor=" + validationTimestamp +
      ",market=" + validationMarketState +
      ",trend=" + validationTrendState +
@@ -2793,6 +2819,9 @@ string validationGateMask =
 
 string validationControlledText =
      "CTS_VALIDATION_V2" +
+     ",dataset=" + validationDatasetId +
+     ",window_start=" + str.format_time(validationStartTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",window_end=" + str.format_time(validationEndTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
      ",sample_type=NON_OVERLAP" +
      ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
      ",horizon=" + str.tostring(validationHorizon) +
@@ -2841,6 +2870,9 @@ if validationControlledExport and validationNonOverlapReady
 // Passive observer only; no feedback into any engine or gate.
 string validationGateText =
      "CTS_VALIDATION_GATE_V2" +
+     ",dataset=" + validationDatasetId +
+     ",window_start=" + str.format_time(validationStartTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",window_end=" + str.format_time(validationEndTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
      ",sample_type=NON_OVERLAP" +
      ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
      ",horizon=" + str.tostring(validationHorizon) +
