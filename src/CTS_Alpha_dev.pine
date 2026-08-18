@@ -3,8 +3,8 @@
 // CTS Alpha
 //-----------------------------------------------------------------------------
 // Version : v0.9.13
-// Commit  : 0041.5-FIX1 - Task 009.2.3
-// Stage   : Task 009.2.3 - Independent Time-Window Validation
+// Commit  : 0041.6-FIX2 - Task 009.3
+// Stage   : Task 009.3 - Out-of-Sample Signal Validation
 //
 // Description:
 // CTS Alpha Trading Framework - Entry Engine V4 Integration
@@ -15,9 +15,16 @@
 // - Keeps the original V1 observation export unchanged for exploratory analysis
 // - Controlled groups are observational labels only; they never modify engines
 // - Non-overlapping samples use the same +1/+3/+6/+12 outcome horizons
-// - Added Gate Outcome Stratification export for controlled validation
-// - Gate labels reuse the existing Execution Guard V1 states; no gate logic is duplicated
 // - No Engine, score, threshold, gate, or Trade Setup formula changes
+//
+// Changes Task 009.3 (2026-08-17):
+// - Added explicit validation dataset time-window controls
+// - Added Dataset ID metadata for independent time-window validation
+// - Preserved controlled non-overlap sampling without changing any Engine or Gate
+// - Added passive Signal Outcome Validation V1 for LONG / SHORT / NEUTRAL
+// - Records +1/+3/+6/+12 directional hit outcomes for the anchor signal
+// - Adds Market State to the signal validation export for regime stratification
+// - No Engine, score, threshold, gate, risk, entry, or Trade Setup formula changes
 //
 // Changes Task 009.1 (2026-08-15):
 // - Added Validation Observation V1 as a passive observer layer
@@ -151,7 +158,7 @@
 //   - Evaluates current price location relative to entry zone
 //   - Calculates entryDistance, entryDistanceATR
 //   - Generates entryLocationScore (0-100)
-//   - Generates entryLocationState (IDEAL ZONE / GOOD ZONE / AWAY FROM ZONE / EXTENDED)
+//   - Generates entryLocationState (IDEAL/GOD/AWAY/EXTENDED)
 // - Added debug display for Entry Location
 //
 // Repository:
@@ -182,14 +189,16 @@ debugMode = input.bool(false, "Debug Mode", group = groupDebug)
 debugExport = input.bool(false, "Debug Export (Pine Logs)", group = groupDebug)
 debugExportOnClose = input.bool(true, "Debug Export On Bar Close", group = groupDebug)
 validationExport = input.bool(false, "Validation Observation (Pine Logs)", group = groupDebug)
+validationSampleBars = input.int(500, "Validation Sample Bars", minval = 50, maxval = 2000, step = 50, group = groupDebug)
 validationControlledExport = input.bool(false, "Validation Controlled V2 (Pine Logs)", group = groupDebug)
 validationGateExport = input.bool(false, "Validation Gate Stratification (Pine Logs)", group = groupDebug)
-validationDatasetId = input.string("A", "Validation Dataset ID", options = ["A", "B"], group = groupDebug)
+validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
+validationSignalOOSExport = input.bool(false, "Validation Signal OOS V1 (Pine Logs)", group = groupDebug)
+validationDatasetId = input.string("A", "Validation Dataset ID", options = ["A", "B", "C"], group = groupDebug)
 const int validationStartDefault = 1757952000000
 const int validationEndDefault = 1786550340000
 validationStartTime = input.time(validationStartDefault, "Validation Start Time", group = groupDebug)
 validationEndTime = input.time(validationEndDefault, "Validation End Time", group = groupDebug)
-validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
 
 //-----------------------------------------------------------------------------
 // 1.2 EMA Settings
@@ -2499,7 +2508,7 @@ string tradeSetupFinalText =
 // Full legacy diagnostic dashboard.
 // These diagnostics are intentionally retained for investigation.
 string fullDiagnosticText =
-     "CTS Alpha v0.9.13 (Commit 0041.4 - Task 009.2.2)" +
+     "CTS Alpha v0.9.13 (Commit 0041.2 - Task 009.2.1 (Patch 1))" +
      "\n" + "State : " + marketState + " (" + str.tostring(stateDuration) + ")" + (stateTransition ? " FLASH" : "") +
      "\n" + "Breakout : " + str.tostring(engineBreakoutScore) + " (" + breakoutState + ")" +
      "\n" + "Trend : " + str.tostring(engineTrendScore) + " (" + trendState + ")" +
@@ -2594,39 +2603,38 @@ string debugText =
 //-----------------------------------------------------------------------------
 
 int validationHorizon = 12
+// Explicit dataset window. The chart viewport does not control validation;
+// these inputs define the actual sample population used by V1/V2/OOS exports.
+bool validationWindowContainsAnchor =
+     time[validationHorizon] >= validationStartTime and
+     time[validationHorizon] <= validationEndTime
 
-// Dataset selection is controlled by the anchor timestamp, not by the
-// TradingView viewport. The visible chart range therefore cannot silently
-// change the validation dataset.
-int validationAnchorBarIndex = bar_index - validationHorizon
-int validationAnchorTime = time[validationHorizon]
-
-// Capture the first chart bar inside the requested window so non-overlap
-// spacing is anchored to Dataset B/A itself rather than last_bar_index.
-var int validationDatasetStartBarIndex = na
-if na(validationDatasetStartBarIndex) and time >= validationStartTime
-    validationDatasetStartBarIndex := bar_index
-
-bool validationDateWindowReady =
-     not na(validationAnchorTime) and
-     validationAnchorTime >= validationStartTime and
-     validationAnchorTime <= validationEndTime
+bool validationOutcomeWithinWindow =
+     time <= validationEndTime
 
 bool validationBaseReady =
      barstate.isconfirmed and
      bar_index >= validationHorizon and
-     validationDateWindowReady
+     validationWindowContainsAnchor and
+     validationOutcomeWithinWindow
 
-bool validationReady = validationExport and validationBaseReady
+// Locate the first chart bar inside the requested dataset window.
+bool validationWindowStartBar =
+     time >= validationStartTime and
+     (na(time[1]) or time[1] < validationStartTime)
+int validationDatasetStartBar = ta.valuewhen(validationWindowStartBar, bar_index, 0)
+int validationAnchorBarIndex = bar_index - validationHorizon
+int validationBarsFromDatasetStart =
+     not na(validationDatasetStartBar) ? validationAnchorBarIndex - validationDatasetStartBar : na
 
 // Controlled / non-overlapping validation:
-// One anchor is selected every N bars. With N = 12 and a 12-bar outcome
-// horizon, adjacent selected anchors have non-overlapping forward windows.
-int validationBarsFromDatasetStart =
-     not na(validationDatasetStartBarIndex) ? validationAnchorBarIndex - validationDatasetStartBarIndex : -1
+// Anchor spacing is measured from the dataset start, not last_bar_index.
+// With N = 12 and a 12-bar outcome horizon, adjacent selected samples have
+// non-overlapping forward windows and Dataset A/B use deterministic phases.
 bool validationNonOverlapReady =
-     (validationControlledExport or validationGateExport) and
+     validationControlledExport and
      validationBaseReady and
+     not na(validationBarsFromDatasetStart) and
      validationBarsFromDatasetStart >= 0 and
      validationBarsFromDatasetStart % validationNonOverlapBars == 0
 
@@ -2738,7 +2746,7 @@ string validationObservationText =
      ",dir_fwd6_atr=" + str.tostring(validationATRReturn6) +
      ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
 
-if validationReady
+if validationExport and validationBaseReady
     log.info(validationObservationText)
 
 //-----------------------------------------------------------------------------
@@ -2773,49 +2781,6 @@ string validationStructureControl = validationBaseReady ? validationMarketState 
 string validationRiskControl = validationBaseReady ? validationMarketState : "NA"
 string validationEntryControl = validationBaseReady ? validationMarketState : "NA"
 string validationDecisionControl = validationBaseReady ? validationMarketState + "|" + validationDirection : "NA"
-
-// Gate Outcome Stratification (Task 009.2.2)
-// Reuses the existing Execution Guard V1 outputs at the anchor bar.
-// No gate is recalculated here.
-string validationDecisionGate = validationBaseReady ? decisionGateState[validationHorizon] : "NA"
-string validationDirectionGate = validationBaseReady ? directionGateState[validationHorizon] : "NA"
-string validationStructureGate = validationBaseReady ? structureGateState[validationHorizon] : "NA"
-string validationRiskGate = validationBaseReady ? riskGateState[validationHorizon] : "NA"
-string validationEntryGate = validationBaseReady ? entryGateState[validationHorizon] : "NA"
-string validationExecutionBlockedGates = validationBaseReady ? executionBlockedGates[validationHorizon] : "NA"
-string validationExecutionConditionalGates = validationBaseReady ? executionConditionalGates[validationHorizon] : "NA"
-int validationBlockedCount = validationBaseReady ? executionGateBlockedCount[validationHorizon] : 0
-int validationConditionalCount = validationBaseReady ? executionGateConditionalCount[validationHorizon] : 0
-
-string validationGateControl = "NA"
-if validationBaseReady
-    if validationExecutionState == "APPROVE"
-        validationGateControl := "ALL_PASS"
-    else if validationExecutionState == "WAIT"
-        validationGateControl := "DECISION_WAIT"
-    else if validationBlockedCount > 1
-        validationGateControl := "MULTI_BLOCK"
-    else if validationDecisionGate == "BLOCK"
-        validationGateControl := "DECISION_BLOCK"
-    else if validationDirectionGate == "BLOCK"
-        validationGateControl := "DIRECTION_BLOCK"
-    else if validationStructureGate == "BLOCK"
-        validationGateControl := "STRUCTURE_BLOCK"
-    else if validationRiskGate == "BLOCK"
-        validationGateControl := "RISK_BLOCK"
-    else if validationEntryGate == "BLOCK"
-        validationGateControl := "ENTRY_BLOCK"
-    else if validationExecutionState == "CONDITIONAL"
-        validationGateControl := validationConditionalCount > 1 ? "MULTI_CONDITIONAL" : validationRiskGate == "CONDITIONAL" ? "RISK_CONDITIONAL" : "ENTRY_CONDITIONAL"
-    else
-        validationGateControl := "OTHER_BLOCK"
-
-string validationGateMask =
-     "D=" + validationDecisionGate +
-     "|DIR=" + validationDirectionGate +
-     "|STR=" + validationStructureGate +
-     "|RISK=" + validationRiskGate +
-     "|ENTRY=" + validationEntryGate
 
 string validationControlledText =
      "CTS_VALIDATION_V2" +
@@ -2861,13 +2826,57 @@ string validationControlledText =
      ",dir_fwd6_atr=" + str.tostring(validationATRReturn6) +
      ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
 
-if validationControlledExport and validationNonOverlapReady
+if validationNonOverlapReady
     log.info(validationControlledText)
 
 //-----------------------------------------------------------------------------
-// Gate Outcome Stratification Export V2
-// Same non-overlapping anchor/outcome sample with explicit Execution Guard states.
-// Passive observer only; no feedback into any engine or gate.
+// 8.4.0 Gate Outcome Stratification V2 (Task 009.2.2)
+//-----------------------------------------------------------------------------
+// Passive observer only. Reuses the existing Execution Guard states at the
+// anchor bar; no gate is recalculated and no validation output feeds back into
+// any Engine, Decision, Risk, Entry, or Execution logic.
+//-----------------------------------------------------------------------------
+
+string validationDecisionGate = validationBaseReady ? decisionGateState[validationHorizon] : "NA"
+string validationDirectionGate = validationBaseReady ? directionGateState[validationHorizon] : "NA"
+string validationStructureGate = validationBaseReady ? structureGateState[validationHorizon] : "NA"
+string validationRiskGate = validationBaseReady ? riskGateState[validationHorizon] : "NA"
+string validationEntryGate = validationBaseReady ? entryGateState[validationHorizon] : "NA"
+string validationExecutionBlockedGates = validationBaseReady ? executionBlockedGates[validationHorizon] : "NA"
+string validationExecutionConditionalGates = validationBaseReady ? executionConditionalGates[validationHorizon] : "NA"
+int validationBlockedCount = validationBaseReady ? executionGateBlockedCount[validationHorizon] : 0
+int validationConditionalCount = validationBaseReady ? executionGateConditionalCount[validationHorizon] : 0
+
+string validationGateControl = "NA"
+if validationBaseReady
+    if validationExecutionState == "APPROVE"
+        validationGateControl := "ALL_PASS"
+    else if validationExecutionState == "WAIT"
+        validationGateControl := "DECISION_WAIT"
+    else if validationBlockedCount > 1
+        validationGateControl := "MULTI_BLOCK"
+    else if validationDecisionGate == "BLOCK"
+        validationGateControl := "DECISION_BLOCK"
+    else if validationDirectionGate == "BLOCK"
+        validationGateControl := "DIRECTION_BLOCK"
+    else if validationStructureGate == "BLOCK"
+        validationGateControl := "STRUCTURE_BLOCK"
+    else if validationRiskGate == "BLOCK"
+        validationGateControl := "RISK_BLOCK"
+    else if validationEntryGate == "BLOCK"
+        validationGateControl := "ENTRY_BLOCK"
+    else if validationExecutionState == "CONDITIONAL"
+        validationGateControl := validationConditionalCount > 1 ? "MULTI_CONDITIONAL" : validationRiskGate == "CONDITIONAL" ? "RISK_CONDITIONAL" : "ENTRY_CONDITIONAL"
+    else
+        validationGateControl := "OTHER_BLOCK"
+
+string validationGateMask =
+     "D=" + validationDecisionGate +
+     "|DIR=" + validationDirectionGate +
+     "|STR=" + validationStructureGate +
+     "|RISK=" + validationRiskGate +
+     "|ENTRY=" + validationEntryGate
+
 string validationGateText =
      "CTS_VALIDATION_GATE_V2" +
      ",dataset=" + validationDatasetId +
@@ -2904,6 +2913,93 @@ string validationGateText =
 if validationGateExport and validationNonOverlapReady
     log.info(validationGateText)
 
+//-----------------------------------------------------------------------------
+// 8.4.1 Signal Outcome Validation V1 (Task 009.3)
+//-----------------------------------------------------------------------------
+// Passive OOS observer only. This layer evaluates the signalDirection that
+// existed at the anchor bar against future price movement. It does not use
+// future outcomes to alter the signal, gates, risk, entry, or execution.
+// Market State is exported alongside the signal so outcomes can later be
+// stratified by regime instead of pooling all market conditions together.
+//-----------------------------------------------------------------------------
+
+string validationSignalOOS = validationBaseReady ? signalDirection[validationHorizon] : "NA"
+string validationSignalMarket = validationBaseReady ? marketState[validationHorizon] : "NA"
+string validationSignalType =
+     validationSignalOOS == "LONG" or validationSignalOOS == "SHORT" ? "DIRECTIONAL" :
+     validationSignalOOS == "NEUTRAL" ? "NON_DIRECTIONAL" : "NA"
+
+float validationSignalDirectionalReturn1 =
+     validationSignalOOS == "LONG" ? validationReturn1 :
+     validationSignalOOS == "SHORT" ? -validationReturn1 : na
+float validationSignalDirectionalReturn3 =
+     validationSignalOOS == "LONG" ? validationReturn3 :
+     validationSignalOOS == "SHORT" ? -validationReturn3 : na
+float validationSignalDirectionalReturn6 =
+     validationSignalOOS == "LONG" ? validationReturn6 :
+     validationSignalOOS == "SHORT" ? -validationReturn6 : na
+float validationSignalDirectionalReturn12 =
+     validationSignalOOS == "LONG" ? validationReturn12 :
+     validationSignalOOS == "SHORT" ? -validationReturn12 : na
+
+float validationSignalATRReturn1 =
+     not na(validationSignalDirectionalReturn1) and validationATR > 0
+     ? validationSignalDirectionalReturn1 / (validationATR / validationAnchorClose * 100.0)
+     : na
+float validationSignalATRReturn3 =
+     not na(validationSignalDirectionalReturn3) and validationATR > 0
+     ? validationSignalDirectionalReturn3 / (validationATR / validationAnchorClose * 100.0)
+     : na
+float validationSignalATRReturn6 =
+     not na(validationSignalDirectionalReturn6) and validationATR > 0
+     ? validationSignalDirectionalReturn6 / (validationATR / validationAnchorClose * 100.0)
+     : na
+float validationSignalATRReturn12 =
+     not na(validationSignalDirectionalReturn12) and validationATR > 0
+     ? validationSignalDirectionalReturn12 / (validationATR / validationAnchorClose * 100.0)
+     : na
+
+string validationSignalHit1 =
+     validationSignalOOS == "LONG" ? (validationReturn1 > 0 ? "YES" : "NO") :
+     validationSignalOOS == "SHORT" ? (validationReturn1 < 0 ? "YES" : "NO") : "NA"
+string validationSignalHit3 =
+     validationSignalOOS == "LONG" ? (validationReturn3 > 0 ? "YES" : "NO") :
+     validationSignalOOS == "SHORT" ? (validationReturn3 < 0 ? "YES" : "NO") : "NA"
+string validationSignalHit6 =
+     validationSignalOOS == "LONG" ? (validationReturn6 > 0 ? "YES" : "NO") :
+     validationSignalOOS == "SHORT" ? (validationReturn6 < 0 ? "YES" : "NO") : "NA"
+string validationSignalHit12 =
+     validationSignalOOS == "LONG" ? (validationReturn12 > 0 ? "YES" : "NO") :
+     validationSignalOOS == "SHORT" ? (validationReturn12 < 0 ? "YES" : "NO") : "NA"
+
+string validationSignalOOSText =
+     "CTS_SIGNAL_OOS_V1" +
+     ",dataset=" + validationDatasetId +
+     ",window_start=" + str.format_time(validationStartTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",window_end=" + str.format_time(validationEndTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",sample_type=NON_OVERLAP" +
+     ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
+     ",horizon=" + str.tostring(validationHorizon) +
+     ",anchor=" + validationTimestamp +
+     ",market=" + validationSignalMarket +
+     ",signal=" + validationSignalOOS +
+     ",fwd1_pct=" + str.tostring(validationReturn1) +
+     ",fwd3_pct=" + str.tostring(validationReturn3) +
+     ",fwd6_pct=" + str.tostring(validationReturn6) +
+     ",fwd12_pct=" + str.tostring(validationReturn12) +
+     ",hit1=" + str.tostring(validationSignalHit1) +
+     ",hit3=" + str.tostring(validationSignalHit3) +
+     ",hit6=" + str.tostring(validationSignalHit6) +
+     ",hit12=" + str.tostring(validationSignalHit12) +
+     ",signal_dir_fwd1_atr=" + str.tostring(validationSignalATRReturn1) +
+     ",signal_dir_fwd3_atr=" + str.tostring(validationSignalATRReturn3) +
+     ",signal_dir_fwd6_atr=" + str.tostring(validationSignalATRReturn6) +
+     ",signal_dir_fwd12_atr=" + str.tostring(validationSignalATRReturn12)
+
+if validationSignalOOSExport and validationNonOverlapReady
+    log.info(validationSignalOOSText)
+
+//-----------------------------------------------------------------------------
 // 8.5 Debug Export
 //-----------------------------------------------------------------------------
 
@@ -2918,8 +3014,8 @@ if validationGateExport and validationNonOverlapReady
 string debugExportText =
      "CTS Alpha DEBUG EXPORT" +
      "\nVersion : v0.9.13" +
-     "\nCommit : 0041.4" +
-     "\nTask : 009.2.2" +
+     "\nCommit : 0041.6" +
+     "\nTask : 009.3" +
      "\n" +
      "\n" + executionGuardFinalText +
      "\n\n" + executionExplainFinalText +
