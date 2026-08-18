@@ -194,6 +194,7 @@ validationControlledExport = input.bool(false, "Validation Controlled V2 (Pine L
 validationGateExport = input.bool(false, "Validation Gate Stratification (Pine Logs)", group = groupDebug)
 validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
 validationSignalOOSExport = input.bool(false, "Validation Signal OOS V1 (Pine Logs)", group = groupDebug)
+validationDirectionAuditExport = input.bool(false, "Validation Direction vs Signal Audit V1 (Pine Logs)", group = groupDebug)
 validationDatasetId = input.string("A", "Validation Dataset ID", options = ["A", "B", "C"], group = groupDebug)
 const int validationStartDefault = 1757952000000
 const int validationEndDefault = 1786550340000
@@ -2912,6 +2913,55 @@ string validationGateText =
 
 if validationGateExport and validationNonOverlapReady
     log.info(validationGateText)
+
+//-----------------------------------------------------------------------------
+// 8.4.0 Direction vs Final Signal Audit V1 (Task 009.3.1)
+//-----------------------------------------------------------------------------
+// Passive audit only. This layer compares the Direction Engine state with the
+// final signalDirection at the same historical anchor. It does not alter any
+// engine, gate, risk, entry, decision, or execution logic.
+//
+// Direction Engine state : tradeDirection
+// Final Signal state     : signalDirection
+// The audit exists to determine whether SHORT/long directions are generated
+// by Direction but later filtered into a different final Signal state.
+//-----------------------------------------------------------------------------
+
+string validationAuditDirection = validationBaseReady ? tradeDirection[validationHorizon] : "NA"
+string validationAuditSignal = validationBaseReady ? signalDirection[validationHorizon] : "NA"
+float validationAuditDirectionScore = validationBaseReady ? engineDirectionScore[validationHorizon] : na
+string validationAuditDecision = validationBaseReady ? decisionState[validationHorizon] : "NA"
+string validationAuditExecution = validationBaseReady ? executionState[validationHorizon] : "NA"
+string validationAuditRisk = validationBaseReady ? riskState[validationHorizon] : "NA"
+string validationAuditEntry = validationBaseReady ? entryState[validationHorizon] : "NA"
+string validationAuditMarket = validationBaseReady ? marketState[validationHorizon] : "NA"
+
+string validationAuditRelation =
+     validationAuditDirection == "NA" or validationAuditSignal == "NA" ? "NA" :
+     validationAuditDirection == validationAuditSignal ? "MATCH" :
+     "FILTERED_OR_MISMATCH"
+
+string validationDirectionAuditText =
+     "CTS_SIGNAL_AUDIT_V1" +
+     ",dataset=" + validationDatasetId +
+     ",window_start=" + str.format_time(validationStartTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",window_end=" + str.format_time(validationEndTime, "yyyy-MM-dd HH:mm", "Asia/Shanghai") +
+     ",sample_type=NON_OVERLAP" +
+     ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
+     ",horizon=" + str.tostring(validationHorizon) +
+     ",anchor=" + validationTimestamp +
+     ",market=" + validationAuditMarket +
+     ",direction=" + validationAuditDirection +
+     ",direction_score=" + str.tostring(validationAuditDirectionScore) +
+     ",final_signal=" + validationAuditSignal +
+     ",relation=" + validationAuditRelation +
+     ",decision=" + validationAuditDecision +
+     ",execution=" + validationAuditExecution +
+     ",risk=" + validationAuditRisk +
+     ",entry=" + validationAuditEntry
+
+if validationDirectionAuditExport and validationNonOverlapReady
+    log.info(validationDirectionAuditText)
 
 //-----------------------------------------------------------------------------
 // 8.4.1 Signal Outcome Validation V1 (Task 009.3)
