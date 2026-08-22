@@ -195,6 +195,7 @@ validationGateExport = input.bool(false, "Validation Gate Stratification (Pine L
 validationNonOverlapBars = input.int(12, "Validation Non-overlap Spacing", minval = 12, maxval = 100, step = 1, group = groupDebug)
 validationSignalOOSExport = input.bool(false, "Validation Signal OOS V1 (Pine Logs)", group = groupDebug)
 validationDirectionAuditExport = input.bool(false, "Validation Direction vs Signal Audit V1 (Pine Logs)", group = groupDebug)
+validationAttributionExport = input.bool(false, "Validation Attribution V1 (Pine Logs)", group = groupDebug)
 validationDatasetId = input.string("A", "Validation Dataset ID", options = ["A", "B", "C"], group = groupDebug)
 const int validationStartDefault = 1757952000000
 const int validationEndDefault = 1786550340000
@@ -3048,6 +3049,77 @@ string validationSignalOOSText =
 
 if validationSignalOOSExport and validationNonOverlapReady
     log.info(validationSignalOOSText)
+
+// Task 009.3.2 - Direction / Decision / Execution Attribution Audit
+//-----------------------------------------------------------------------------
+// Passive audit only. This block does NOT alter any Engine, Decision, Gate,
+// Risk, Entry, or Trade Setup behavior. It explains where a directional
+// signal is filtered between Direction Engine and Final Signal / Execution.
+// The same controlled non-overlapping anchors are used as V2/OOS.
+//-----------------------------------------------------------------------------
+
+string validationAttributionDirection = validationBaseReady ? tradeDirection[validationHorizon] : "NA"
+string validationAttributionFinalSignal = validationBaseReady ? signalDirection[validationHorizon] : "NA"
+string validationAttributionRelation =
+     not validationBaseReady ? "NA" :
+     validationAttributionDirection == validationAttributionFinalSignal ? "MATCH" :
+     validationAttributionDirection == "LONG" or validationAttributionDirection == "SHORT" ? "FILTERED_OR_MISMATCH" :
+     "NON_DIRECTIONAL"
+
+string validationAttributionDecisionGate = validationBaseReady ? decisionGateState[validationHorizon] : "NA"
+string validationAttributionDirectionGate = validationBaseReady ? directionGateState[validationHorizon] : "NA"
+string validationAttributionStructureGate = validationBaseReady ? structureGateState[validationHorizon] : "NA"
+string validationAttributionRiskGate = validationBaseReady ? riskGateState[validationHorizon] : "NA"
+string validationAttributionEntryGate = validationBaseReady ? entryGateState[validationHorizon] : "NA"
+string validationAttributionBlockedGates = validationBaseReady ? executionBlockedGates[validationHorizon] : "NA"
+string validationAttributionConditionalGates = validationBaseReady ? executionConditionalGates[validationHorizon] : "NA"
+string validationAttributionBlockReason = validationBaseReady ? executionBlockReason[validationHorizon] : "NA"
+string validationAttributionDetailReason = validationBaseReady ? executionDetailReason[validationHorizon] : "NA"
+string validationAttributionDecision = validationBaseReady ? decisionState[validationHorizon] : "NA"
+string validationAttributionRisk = validationBaseReady ? riskState[validationHorizon] : "NA"
+string validationAttributionEntry = validationBaseReady ? entryState[validationHorizon] : "NA"
+string validationAttributionExecution = validationBaseReady ? executionState[validationHorizon] : "NA"
+
+string validationAttributionText =
+     "CTS_VALIDATION_ATTRIBUTION_V1" +
+     ",sample_type=NON_OVERLAP" +
+     ",anchor_spacing=" + str.tostring(validationNonOverlapBars) +
+     ",horizon=" + str.tostring(validationHorizon) +
+     ",anchor=" + validationTimestamp +
+     ",market=" + validationMarketState +
+     ",direction=" + validationAttributionDirection +
+     ",final_signal=" + validationAttributionFinalSignal +
+     ",relation=" + validationAttributionRelation +
+     ",decision=" + validationAttributionDecision +
+     ",risk=" + validationAttributionRisk +
+     ",entry=" + validationAttributionEntry +
+     ",execution=" + validationAttributionExecution +
+     ",decision_gate=" + validationAttributionDecisionGate +
+     ",direction_gate=" + validationAttributionDirectionGate +
+     ",structure_gate=" + validationAttributionStructureGate +
+     ",risk_gate=" + validationAttributionRiskGate +
+     ",entry_gate=" + validationAttributionEntryGate +
+     ",blocked_gates=" + validationAttributionBlockedGates +
+     ",conditional_gates=" + validationAttributionConditionalGates +
+     ",block_reason=" + validationAttributionBlockReason +
+     ",detail_reason=" + validationAttributionDetailReason +
+     ",direction_score=" + str.tostring(engineDirectionScore[validationHorizon]) +
+     ",structure_align_score=" + str.tostring(engineStructureDirectionScore[validationHorizon]) +
+     ",risk_score=" + str.tostring(engineRiskScore[validationHorizon]) +
+     ",entry_score=" + str.tostring(engineEntryScore[validationHorizon]) +
+     ",location_score=" + str.tostring(entryLocationScore[validationHorizon]) +
+     ",distance_atr=" + str.tostring(entryDistanceATR[validationHorizon]) +
+     ",decision_score=" + str.tostring(engineDecisionScore[validationHorizon]) +
+     ",gate_passed=" + str.tostring(executionGatePassedCount[validationHorizon]) +
+     ",blocked_count=" + str.tostring(executionGateBlockedCount[validationHorizon]) +
+     ",conditional_count=" + str.tostring(executionGateConditionalCount[validationHorizon]) +
+     ",fwd12_pct=" + str.tostring(validationReturn12) +
+     ",dir_fwd12_pct=" + str.tostring(validationDirectionalReturn12) +
+     ",dir_fwd12_atr=" + str.tostring(validationATRReturn12)
+
+if validationAttributionExport and validationNonOverlapReady
+    log.info(validationAttributionText)
+
 
 //-----------------------------------------------------------------------------
 // 8.5 Debug Export
